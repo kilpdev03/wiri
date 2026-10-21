@@ -9,6 +9,7 @@ import { Kbd } from "../parts";
 import { BellIcon, CalendarIcon, ChatIcon, MailIcon, SparkIcon } from "../icons";
 import { joinLabel } from "../../lib/calendar";
 import { appAccent, openSource } from "../panel/Tabs";
+import { installUpdate } from "../../lib/update";
 
 /** Tiempo visible antes de cerrarse sola (se reinicia al quitar el mouse). */
 const DURATION_MS: Record<Alert["kind"], number> = {
@@ -17,19 +18,25 @@ const DURATION_MS: Record<Alert["kind"], number> = {
   mail: 9_000,
   calendar: 12_000,
   claude: 15_000,
+  update: 20_000,
 };
 
 function KindIcon({ alert }: { alert: Alert }) {
   if (alert.kind === "reminder") return <BellIcon size={14} />;
   if (alert.kind === "mail") return <MailIcon size={14} />;
   if (alert.kind === "calendar") return <CalendarIcon size={14} />;
-  if (alert.kind === "claude") return <SparkIcon size={14} />;
+  if (alert.kind === "claude" || alert.kind === "update") return <SparkIcon size={14} />;
   return <ChatIcon size={14} />;
 }
 
 /** Acción principal (Enter) de cada tipo de alerta. */
 export function primaryAction(alert: Alert) {
   const { resolveAlert, dismissAlert, openPanel } = useIsland.getState();
+  if (alert.kind === "update") {
+    dismissAlert(alert.id);
+    installUpdate();
+    return;
+  }
   // Sin app a la que ir, Enter abre Avisos para leerla: ahí debe seguir estando.
   if (alert.kind === "notification" && !alert.aumid) {
     dismissAlert(alert.id);
@@ -144,7 +151,7 @@ export function AlertView({ alert, queued }: { alert: Alert; queued: number }) {
             </>
           ) : (
             <>
-              <ActionButton label={alert.joinUrl ? `Unirse a ${joinLabel(alert.joinUrl)}` : alert.kind === "claude" ? "Ir a la sesión" : alert.kind === "mail" || alert.aumid || alert.kind === "calendar" ? "Abrir" : "Ver"} kbd="Enter" primary color={color} onClick={() => primaryAction(alert)} />
+              <ActionButton label={alert.joinUrl ? `Unirse a ${joinLabel(alert.joinUrl)}` : alert.kind === "claude" ? "Ir a la sesión" : alert.kind === "update" ? "Actualizar" : alert.kind === "mail" || alert.aumid || alert.kind === "calendar" ? "Abrir" : "Ver"} kbd="Enter" primary color={color} onClick={() => primaryAction(alert)} />
               <div className="row gap-6">
                 {alert.messageId && (
                   <ActionButton

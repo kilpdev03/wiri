@@ -24,7 +24,7 @@ export type Reminder = {
   dueMs: number;
 };
 
-export type AlertKind = "reminder" | "notification" | "mail" | "calendar" | "claude";
+export type AlertKind = "reminder" | "notification" | "mail" | "calendar" | "claude" | "update";
 
 export type Alert = {
   id: string;
@@ -123,6 +123,8 @@ export type GmailStatus = {
   lastSyncMs: number;
 };
 
+export type UpdateInfo = { version: string; current: string; notes: string | null };
+
 export type MediaAction = "toggle" | "next" | "previous" | "seek" | "shuffle" | "repeat";
 
 export const ipc = {
@@ -167,6 +169,9 @@ export const ipc = {
   calendarStatus: () => invoke<CalendarStatus | null>("calendar_status"),
   calendarRefresh: () => invoke("calendar_refresh"),
 
+  updateCheck: () => invoke<UpdateInfo | null>("update_check"),
+  updateInstall: () => invoke("update_install"),
+
   notifAccess: () => invoke<string>("notif_access"),
   notifDismiss: (winId: number) => invoke("notif_dismiss", { winId }),
   notifOpenApp: (aumid: string) => invoke("notif_open_app", { aumid }),
@@ -197,6 +202,8 @@ export const events = {
     listen<{ id: string; decision: string }>("claude://permission-done", (e) => cb(e.payload)),
   onClaudeStatus: (cb: (s: Record<string, any>) => void) => listen<Record<string, any>>("claude://status", (e) => cb(e.payload)),
   onClaudeHook: (cb: (p: HookPayload) => void) => listen<HookPayload>("claude://hook", (e) => cb(e.payload)),
+  onUpdateAvailable: (cb: (u: UpdateInfo) => void) => listen<UpdateInfo>("update://available", (e) => cb(e.payload)),
+  onUpdateProgress: (cb: (pct: number) => void) => listen<number>("update://progress", (e) => cb(e.payload)),
   onCalendar: (cb: (s: CalendarStatus) => void) => listen<CalendarStatus>("calendar://status", (e) => cb(e.payload)),
   onGmail: (cb: (s: GmailStatus) => void) => listen<GmailStatus>("gmail://status", (e) => cb(e.payload)),
 };

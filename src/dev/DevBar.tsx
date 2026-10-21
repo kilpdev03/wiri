@@ -24,6 +24,7 @@ export function DevBar() {
       {btn("Audífonos", demo.device)}
       {btn("Cargador", demo.power)}
       {btn("Micrófono", demo.mic)}
+      {btn("Actualización", demo.update)}
       {btn("Sin música", demo.noMedia)}
       {btn("Con música", demo.media)}
     </div>

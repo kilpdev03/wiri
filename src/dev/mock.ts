@@ -236,6 +236,21 @@ export function installMock() {
           reminders = reminders.filter((r) => r.id !== a.id);
           emit("reminder://changed", reminders);
           return null;
+        case "plugin:app|version":
+          return "0.2.0";
+        case "update_install":
+          // Simula la descarga; en la app real el instalador cierra y reabre Wiri.
+          return new Promise<void>((resolve) => {
+            let pct = 0;
+            const id = setInterval(() => {
+              pct = Math.min(100, pct + 20);
+              emit("update://progress", pct);
+              if (pct === 100) {
+                clearInterval(id);
+                resolve();
+              }
+            }, 300);
+          });
         default:
           return null;
       }
@@ -272,6 +287,7 @@ export const demo = {
       emit("system://privacy", { mic: on ? ["Teams"] : [], cam: [] });
     };
   })(),
+  update: () => emit("update://available", { version: "0.3.0", current: "0.2.0", notes: "Responder correos con Claude\nArreglos varios" }),
   toggle: () => emit("island://toggle", null),
   quickAdd: () => emit("island://quick-add", null),
   noMedia: () => emit("media://update", null),

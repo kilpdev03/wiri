@@ -8,6 +8,7 @@ import { applyHook, applyStatus, describePermission, resetLabel, usageFromStatus
 import { shouldAlert } from "./lib/mailFilters";
 import { formatClock } from "./lib/parseReminder";
 import { sounds } from "./lib/sounds";
+import { onUpdateAvailable, onUpdateProgress } from "./lib/update";
 import { useIsland } from "./store/islandStore";
 
 /** Avisos de límite ya mostrados: "<reinicio>@80" y "<reinicio>@95". */
@@ -107,6 +108,8 @@ export default function App() {
       events.onGmail(s.setGmail),
       events.onNotifStatus((st) => s.setNotifAccess(st.access)),
       events.onCalendar(s.setCalendar),
+      events.onUpdateAvailable(onUpdateAvailable),
+      events.onUpdateProgress(onUpdateProgress),
       events.onClaudePermission(({ id, event, ancestors }) => {
         const st = useIsland.getState();
         // Desactivado en Ajustes: el permiso vuelve a la terminal al instante.

@@ -6,6 +6,7 @@ mod media;
 mod notifications;
 mod reminders;
 mod system;
+mod updater;
 mod window;
 
 use std::collections::HashMap;
@@ -153,6 +154,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(window::IslandState::default())
         .setup(|app| {
             let handle = app.handle();
@@ -163,6 +165,7 @@ pub fn run() {
             notifications::start(handle);
             system::start(handle);
             claude::start(handle);
+            updater::start(handle);
             let mail = gmail::Gmail::load();
             gmail::start(handle, mail.clone());
             calendar::start(handle, mail.clone());
@@ -174,6 +177,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             shortcuts,
+            updater::update_check,
+            updater::update_install,
             window::set_anchor,
             audio_devices::audio_devices,
             claude::claude_hooks_status,

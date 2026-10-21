@@ -9,6 +9,8 @@ import { ipc, prettyShortcut, type Alert, type CalEvent, type ClaudeHooksStatus,
 import { MAIL_ALERT_MODES, MAIL_FILTERS, matchesFilter, type MailAlertMode } from "../../lib/mailFilters";
 import { formatClock, formatCountdown, parseReminder } from "../../lib/parseReminder";
 import { sounds } from "../../lib/sounds";
+import { installUpdate, onUpdateAvailable } from "../../lib/update";
+import { getVersion } from "@tauri-apps/api/app";
 import { useShallow } from "zustand/react/shallow";
 import { useIsland } from "../../store/islandStore";
 import { Mascot } from "../Mascot";
@@ -45,6 +47,7 @@ export function appAccent(alert: Pick<Alert, "kind" | "app">): string {
   if (alert.kind === "mail") return "#ea4335";
   if (alert.kind === "calendar") return "#4285f4";
   if (alert.kind === "claude") return "#d97757";
+  if (alert.kind === "update") return "#30d158";
   const app = alert.app?.toLowerCase() ?? "";
   if (app.includes("whatsapp")) return "#25d366";
   if (app.includes("discord")) return "#5865f2";
@@ -985,6 +988,52 @@ function Toggle({ label, hint, value, onChange }: { label: string; hint: string;
 }
 
 
+/** Versión instalada y botón para buscar o instalar la nueva. */
+function UpdateRow() {
+  const update = useIsland((s) => s.update);
+  const [version, setVersion] = useState("");
+  const [checking, setChecking] = useState(false);
+  const [hint, setHint] = useState<string | null>(null);
+  useEffect(() => {
+    getVersion().then(setVersion).catch(() => {});
+  }, []);
+  const check = async () => {
+    setChecking(true);
+    setHint(null);
+    try {
+      const info = await ipc.updateCheck();
+      if (info) onUpdateAvailable(info);
+      else setHint("Ya tienes la última versión");
+    } catch (e) {
+      setHint(`No se pudo revisar: ${e}`);
+    } finally {
+      setChecking(false);
+    }
+  };
+  const installing = update?.progress != null;
+  return (
+    <div className="toggle-row" style={{ cursor: "default" }}>
+      <div className="col grow min-w-0">
+        <span className="text-sm">Actualizaciones{version ? ` · Wiri ${version}` : ""}</span>
+        <span className="caption truncate">
+          {installing
+            ? `Descargando ${update.version}… ${update.progress} %`
+            : update?.error ?? (update ? `Disponible la ${update.version}` : hint ?? "Se revisan solas cada 6 horas")}
+        </span>
+      </div>
+      {update ? (
+        <button className="pill-btn primary" style={{ background: "#30d158" }} disabled={installing} onClick={installUpdate}>
+          {installing ? "Instalando…" : "Actualizar"}
+        </button>
+      ) : (
+        <button className="pill-btn" disabled={checking} onClick={check}>
+          {checking ? "Buscando…" : "Buscar"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 /** Muestras de color redondas. */
 function Swatches<T extends string>({ value, options, onChange }: { value: T; options: Record<T, { label: string; rgb: string; light?: boolean }>; onChange: (v: T) => void }) {
   return (
@@ -1099,6 +1148,7 @@ export function SettingsTab() {
             <Toggle label="Sonidos" hint="Avisos, recordatorios y clics" value={prefs.sounds} onChange={(v) => setPref("sounds", v)} />
             <Toggle label="Bolo" hint="La mascota que vive en la isla" value={prefs.mascot} onChange={(v) => setPref("mascot", v)} />
             <Toggle label="Aprobar permisos de Claude" hint="Permitir o denegar desde la isla; si no, siguen en la terminal" value={prefs.claudeApprove} onChange={(v) => setPref("claudeApprove", v)} />
+            <UpdateRow />
           </div>
         )}
         {section === "shortcuts" && (

@@ -1,6 +1,6 @@
 [package]
 name = "win-island"
-version = "0.1.0"
+version = "0.2.0"
 description = "Dynamic Island para Windows"
 authors = ["Kevin Leiva"]
 edition = "2024"
@@ -36,6 +36,7 @@ rand = "0.8"
 winreg = "0.55"
 windows-core = "0.61"
 tokio = { version = "1", features = ["net", "io-util", "time", "sync", "macros"] }
+tauri-plugin-updater = "2"
 
 [dependencies.windows]
 version = "0.61"

@@ -1,11 +1,11 @@
 import { create } from "zustand";
-import type { Alert, AlertKind, CalendarStatus, GmailStatus, MailItem, Media, Power, Privacy, Reminder, Volume } from "../lib/ipc";
+import type { Alert, AlertKind, CalendarStatus, GmailStatus, MailItem, Media, Power, Privacy, Reminder, UpdateInfo, Volume } from "../lib/ipc";
 import { DEFAULT_APPEARANCE, type Appearance } from "../lib/appearance";
 import type { MailAlertMode, MailFilter } from "../lib/mailFilters";
 import type { ClaudeSession, ClaudeUsage } from "../lib/claude";
 
 /** Menor número = más urgente. La música no compite: es actividad de fondo. */
-const PRIORITY: Record<AlertKind, number> = { reminder: 0, claude: 1, notification: 1, mail: 2, calendar: 3 };
+const PRIORITY: Record<AlertKind, number> = { reminder: 0, claude: 1, notification: 1, mail: 2, calendar: 3, update: 4 };
 
 export type Tab = "home" | "music" | "mail" | "reminders" | "notifications" | "claude" | "settings";
 export const TABS: Tab[] = ["home", "music", "mail", "reminders", "notifications", "claude", "settings"];
@@ -77,6 +77,8 @@ type IslandStore = {
   claudeHooks: boolean;
   /** Límites del plan de Claude (5 h y semana). */
   claudeUsage: ClaudeUsage | null;
+  /** Versión nueva publicada; `progress` mientras se descarga (0–100). */
+  update: (UpdateInfo & { progress: number | null; error: string | null }) | null;
   /** Correo abierto en "Resolver con Claude". */
   resolveMail: MailItem | null;
   osd: (Osd & { until: number }) | null;
@@ -105,6 +107,7 @@ type IslandStore = {
   setClaude: (s: Record<string, ClaudeSession>) => void;
   setClaudeHooks: (installed: boolean) => void;
   setClaudeUsage: (u: ClaudeUsage) => void;
+  setUpdate: (u: IslandStore["update"]) => void;
   setResolveMail: (m: MailItem | null) => void;
   showOsd: (osd: Osd, ms: number) => void;
   setPower: (p: Power) => void;
@@ -148,6 +151,7 @@ export const useIsland = create<IslandStore>((set) => ({
   claude: {},
   claudeHooks: false,
   claudeUsage: null,
+  update: null,
   resolveMail: null,
   osd: null,
   power: null,
@@ -172,6 +176,7 @@ export const useIsland = create<IslandStore>((set) => ({
   setClaude: (claude) => set({ claude }),
   setClaudeHooks: (claudeHooks) => set({ claudeHooks }),
   setClaudeUsage: (claudeUsage) => set({ claudeUsage }),
+  setUpdate: (update) => set({ update }),
   setResolveMail: (resolveMail) => set({ resolveMail }),
   showOsd: (osd, ms) => set({ osd: { ...osd, until: Date.now() + ms } }),
   setPower: (power) => set({ power }),
