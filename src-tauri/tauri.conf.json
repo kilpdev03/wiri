@@ -1,0 +1,51 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Wiri",
+  "mainBinaryName": "Wiri",
+  "version": "0.1.0",
+  "identifier": "com.simplesoluciones.winisland",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build && cargo build --release -p wiri-hook --manifest-path src-tauri/Cargo.toml",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Wiri",
+        "width": 860,
+        "height": 400,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "focus": false,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "publisher": "Simple Soluciones",
+    "shortDescription": "Wiri, la isla dinámica para Windows",
+    "resources": { "target/release/wiri-hook.exe": "wiri-hook.exe" },
+    "windows": { "nsis": { "installMode": "currentUser" } },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  }
+}

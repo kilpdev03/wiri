@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- Ícono de Wiri: Bolo, el guijarro lila con antena, sobre fondo oscuro. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#26213a"/>
+      <stop offset="1" stop-color="#110f1a"/>
+    </linearGradient>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#d6cbff"/>
+      <stop offset="1" stop-color="#a593f0"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.62" r="0.5">
+      <stop offset="0" stop-color="#b9a7ff" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#b9a7ff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect x="32" y="32" width="960" height="960" rx="224" fill="url(#bg)"/>
+  <rect x="32" y="32" width="960" height="960" rx="224" fill="url(#glow)"/>
+
+  <!-- Sombra -->
+  <ellipse cx="512" cy="822" rx="250" ry="34" fill="#000" opacity="0.35"/>
+
+  <!-- Antena -->
+  <path d="M512 368 Q520 270 590 215" fill="none" stroke="#8a78d6" stroke-width="26" stroke-linecap="round"/>
+  <circle cx="596" cy="208" r="44" fill="#e6deff"/>
+
+  <!-- Cuerpo -->
+  <rect x="222" y="360" width="580" height="450" rx="215" ry="215" fill="url(#body)"/>
+  <ellipse cx="350" cy="430" rx="62" ry="30" transform="rotate(-28 350 430)" fill="#fff" opacity="0.45"/>
+
+  <!-- Ojos -->
+  <ellipse cx="420" cy="560" rx="44" ry="60" fill="#17161c"/>
+  <ellipse cx="604" cy="560" rx="44" ry="60" fill="#17161c"/>
+  <circle cx="436" cy="537" r="15" fill="#fff"/>
+  <circle cx="620" cy="537" r="15" fill="#fff"/>
+
+  <!-- Mejillas -->
+  <ellipse cx="340" cy="638" rx="42" ry="24" fill="#ff7896" opacity="0.5"/>
+  <ellipse cx="684" cy="638" rx="42" ry="24" fill="#ff7896" opacity="0.5"/>
+
+  <!-- Sonrisa -->
+  <path d="M470 652 Q512 700 554 652" fill="none" stroke="#17161c" stroke-width="22" stroke-linecap="round"/>
+</svg>
