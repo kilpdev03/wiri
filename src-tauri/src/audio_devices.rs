@@ -19,6 +19,7 @@ use windows::Win32::Media::Audio::{
 };
 use windows::Win32::System::Com::{CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree};
 #[allow(unused_imports)]
+use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
 use windows::core::{GUID, HRESULT, IUnknown, IUnknown_Vtbl, PCWSTR, interface};
 
 use crate::system::friendly_name;
@@ -100,6 +101,26 @@ pub fn audio_devices() -> Result<AudioDevices, String> {
     com_init();
     let e = enumerator().map_err(|e| e.to_string())?;
     Ok(AudioDevices { outputs: list(&e, eRender), inputs: list(&e, eCapture) })
+}
+
+fn capture_volume(e: &IMMDeviceEnumerator, role: ERole) -> Option<IAudioEndpointVolume> {
+    unsafe { e.GetDefaultAudioEndpoint(eCapture, role).ok()?.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None).ok() }
+}
+
+/// Silencia o reactiva el micrófono: el de llamadas (Teams, Meet, Zoom…) y el
+/// general, por si son distintos. Devuelve si quedó silenciado.
+#[tauri::command]
+pub fn mic_toggle_mute() -> Result<bool, String> {
+    com_init();
+    let e = enumerator().map_err(|e| e.to_string())?;
+    let comms = capture_volume(&e, eCommunications).ok_or("No hay micrófono conectado.")?;
+    let muted = !unsafe { comms.GetMute() }.map_err(|e| e.to_string())?.as_bool();
+    for role in [eCommunications, eConsole] {
+        if let Some(v) = capture_volume(&e, role) {
+            unsafe { v.SetMute(muted, std::ptr::null()) }.map_err(|e| format!("Windows no permitió silenciar el micrófono: {e}"))?;
+        }
+    }
+    Ok(muted)
 }
 
 /// Convierte el dispositivo en predeterminado para todo (apps, multimedia y llamadas).

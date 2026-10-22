@@ -6,9 +6,13 @@ import { useDominantColor, useNow } from "../lib/hooks";
 import { ipc } from "../lib/ipc";
 import { sounds } from "../lib/sounds";
 import { TABS, useIsland } from "../store/islandStore";
-import type { Mood } from "./Mascot";
+import { Mascot, type Mood } from "./Mascot";
+import { DropIcon } from "./icons";
+import { activateNav, clearNav, moveNav } from "../lib/keyNav";
 import { Panel, PANEL_H } from "./panel/Panel";
+import { BATTERY_STRIP_H, hasBatteryInfo } from "./panel/Tabs";
 import { AlertView, PermissionCard, primaryAction, respondPermission } from "./views/AlertView";
+import { PLAN_CARD_H, PlanCard, QuestionCard, questionCardHeight } from "./views/ClaudeAsk";
 import { Compact } from "./views/Compact";
 import { Osd } from "./views/Osd";
 import { QuickAdd } from "./views/QuickAdd";
@@ -24,12 +28,12 @@ const SLEEP_AFTER_MS = 120_000;
 const SPRING: Transition = { type: "spring", stiffness: 380, damping: 30, mass: 0.9 };
 const SPRING_BOUNCY: Transition = { type: "spring", stiffness: 420, damping: 22, mass: 0.8 };
 
-type Mode = "hidden" | "compact" | "peek" | "panel" | "alert" | "input" | "osd";
+type Mode = "hidden" | "compact" | "peek" | "panel" | "alert" | "input" | "osd" | "drop";
 type Shape = { w: number; h: number; r: number };
 
 export function Island() {
   const state = useIsland();
-  const { media, reminders, alerts, hovered, open, tab, pinned, quickAdd, prefs } = state;
+  const { media, reminders, alerts, hovered, open, tab, quickAdd, prefs } = state;
   const color = useDominantColor(media?.artwork, ACCENTS[prefs.accent].rgb);
   const squash = useAnimationControls();
   const lastActivity = useRef(Date.now());
@@ -65,9 +69,12 @@ export function Island() {
   // Si una ventana ocupa el borde (navegador maximizado), solo alertas, mouse o timer urgente la sacan.
   const occluded = state.occluded && prefs.autoHide;
   const showCompact = hasActivity && (!prefs.autoHide || (flashing && !occluded) || timerUrgent);
-  const showMascotRest = prefs.mascot && !occluded;
+  // Con Bolo en el escritorio, la isla en reposo no lo muestra también.
+  const showMascotRest = prefs.mascot && !occluded && !state.buddyAway;
 
-  const mode: Mode = quickAdd
+  const mode: Mode = state.dropHover
+    ? "drop"
+    : quickAdd
     ? "input"
     : alert
       ? "alert"
@@ -93,9 +100,34 @@ export function Island() {
       shape = { w: 520, h: 56, r: 24 };
       content = <QuickAdd />;
       break;
+    case "drop":
+      // Arrastrando archivos: la isla se abre como una boca para tragarlos.
+      shape = { w: 420, h: 72, r: 26 };
+      content = (
+        <div className="drop-zone">
+          {prefs.mascot ? <Mascot size={44} mood="alert" /> : <DropIcon size={22} />}
+          <div className="col">
+            <span className="text-sm">Suéltalo aquí</span>
+            <span className="caption">Claude lo lee y le preguntas lo que quieras</span>
+          </div>
+        </div>
+      );
+      break;
     case "alert":
-      shape = { w: 600, h: alert.permission ? 132 : alert.reminder ? 104 : 96, r: 28 };
-      content = alert.permission ? (
+      shape = {
+        w: 600,
+        h: alert.permission?.questions
+          ? questionCardHeight(alert.permission.questions)
+          : alert.permission?.plan !== undefined
+            ? PLAN_CARD_H
+            : alert.permission ? 132 : alert.reminder ? 104 : 96,
+        r: 28,
+      };
+      content = alert.permission?.questions ? (
+        <QuestionCard alert={alert} queued={alerts.length - 1} />
+      ) : alert.permission?.plan !== undefined ? (
+        <PlanCard alert={alert} queued={alerts.length - 1} />
+      ) : alert.permission ? (
         <PermissionCard alert={alert} queued={alerts.length - 1} />
       ) : (
         <AlertView alert={alert} queued={alerts.length - 1} />
@@ -103,7 +135,8 @@ export function Island() {
       key = `alert-${alert.id}`;
       break;
     case "panel":
-      shape = { w: 680, h: PANEL_H[tab], r: 28 };
+      // Inicio crece una franja cuando hay batería que mostrar.
+      shape = { w: 680, h: PANEL_H[tab] + (tab === "home" && hasBatteryInfo(state.power, state.bluetooth) ? BATTERY_STRIP_H : 0), r: 28 };
       content = <Panel mood={mood} color={color} onClose={() => closePanel(true)} />;
       break;
     case "osd":
@@ -177,24 +210,8 @@ export function Island() {
     return () => clearTimeout(id);
   }, [prefs.hoverOpen, hovered, open, alert]);
 
-  // Plegar al salir el mouse, salvo fijada o escribiendo.
-  useEffect(() => {
-    if (!open || pinned || hovered) return;
-    const id = setTimeout(() => {
-      if (document.activeElement?.tagName !== "INPUT") closePanel(true);
-    }, 700);
-    return () => clearTimeout(id);
-  }, [open, pinned, hovered]);
-
-  // Clic fuera (la ventana pierde el foco) también pliega.
-  useEffect(() => {
-    const onBlur = () => {
-      const s = useIsland.getState();
-      if (s.open && !s.pinned) s.closePanel();
-    };
-    window.addEventListener("blur", onBlur);
-    return () => window.removeEventListener("blur", onBlur);
-  }, []);
+  // El panel ya no se pliega solo (al salir el mouse o al hacer clic fuera):
+  // se cierra con su botón de flecha (o el atajo global de abrir/cerrar).
 
   // Teclado mientras la isla tiene el foco.
   useEffect(() => {
@@ -204,6 +221,8 @@ export function Island() {
       const current = s.alerts[0];
       if (current && !s.quickAdd) {
         // Permiso de Claude: Y/N/A (solo con la isla enfocada; nunca roba el foco).
+        // Preguntas y planes: sus tarjetas manejan el teclado (opciones numeradas, texto).
+        if (current.permission?.questions || current.permission?.plan !== undefined) return;
         if (current.permission) {
           const key = e.key.toLowerCase();
           if (key === "y") respondPermission(current, "allow");
@@ -217,13 +236,26 @@ export function Island() {
         return;
       }
       if (!s.open || typing) return;
-      if (e.key === "Escape") closePanel(true);
-      else if (/^[1-6]$/.test(e.key)) s.setTab(TABS[Number(e.key) - 1]);
+      if (e.key === "Escape") {
+        // Solo suelta el elemento marcado: el panel se cierra con su botón.
+        clearNav();
+      } else if (/^[1-8]$/.test(e.key)) s.setTab(TABS[Number(e.key) - 1]);
       else if (e.key === " " && s.media) {
         e.preventDefault();
         ipc.mediaControl("toggle");
-      } else if (e.key === "ArrowLeft" && s.media) ipc.mediaControl("previous");
-      else if (e.key === "ArrowRight" && s.media) ipc.mediaControl("next");
+      } else if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && e.shiftKey) {
+        if (s.media) ipc.mediaControl(e.key === "ArrowLeft" ? "previous" : "next");
+      } else if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        // ←/→: pestaña anterior o siguiente (da la vuelta).
+        e.preventDefault();
+        const i = TABS.indexOf(s.tab);
+        const next = (i + (e.key === "ArrowRight" ? 1 : -1) + TABS.length) % TABS.length;
+        clearNav();
+        s.setTab(TABS[next]);
+      } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        moveNav(e.key === "ArrowDown" ? 1 : -1);
+      } else if (e.key === "Enter" && activateNav()) e.preventDefault();
       else if (e.key.toLowerCase() === "p") s.togglePin();
       else if (e.key.toLowerCase() === "n") s.setTab("reminders");
     };

@@ -1,7 +1,7 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { motion } from "motion/react";
 import { useEffect } from "react";
-import { ipc, type Alert, type PermissionDecision } from "../../lib/ipc";
+import { ipc, type Alert, type PermissionDecision, type PermissionReply } from "../../lib/ipc";
 import { sounds } from "../../lib/sounds";
 import { useIsland } from "../../store/islandStore";
 import { Mascot } from "../Mascot";
@@ -37,6 +37,19 @@ export function primaryAction(alert: Alert) {
     installUpdate();
     return;
   }
+  if (alert.recap) {
+    dismissAlert(alert.id);
+    openPanel("claude");
+    useIsland.getState().setRecapOpen(true);
+    ipc.grabFocus();
+    return;
+  }
+  // Avisos con enlace (GitHub): Enter abre la página.
+  if (alert.kind === "notification" && !alert.aumid && alert.url) {
+    resolveAlert(alert);
+    openUrl(alert.url);
+    return;
+  }
   // Sin app a la que ir, Enter abre Avisos para leerla: ahí debe seguir estando.
   if (alert.kind === "notification" && !alert.aumid) {
     dismissAlert(alert.id);
@@ -54,7 +67,7 @@ export function primaryAction(alert: Alert) {
   if (alert.kind === "notification") openSource(alert);
 }
 
-function ActionButton({ label, kbd, onClick, primary, color }: { label: string; kbd?: string; onClick: () => void; primary?: boolean; color?: string }) {
+export function ActionButton({ label, kbd, onClick, primary, color }: { label: string; kbd?: string; onClick: () => void; primary?: boolean; color?: string }) {
   return (
     <motion.button
       className={`pill-btn ${primary ? "primary" : ""}`}
@@ -151,7 +164,7 @@ export function AlertView({ alert, queued }: { alert: Alert; queued: number }) {
             </>
           ) : (
             <>
-              <ActionButton label={alert.joinUrl ? `Unirse a ${joinLabel(alert.joinUrl)}` : alert.kind === "claude" ? "Ir a la sesión" : alert.kind === "update" ? "Actualizar" : alert.kind === "mail" || alert.aumid || alert.kind === "calendar" ? "Abrir" : "Ver"} kbd="Enter" primary color={color} onClick={() => primaryAction(alert)} />
+              <ActionButton label={alert.joinUrl ? `Unirse a ${joinLabel(alert.joinUrl)}` : alert.recap ? "Ver resumen" : alert.kind === "claude" ? "Ir a la sesión" : alert.kind === "update" ? "Actualizar" : alert.kind === "mail" || alert.aumid || alert.kind === "calendar" ? "Abrir" : "Ver"} kbd="Enter" primary color={color} onClick={() => primaryAction(alert)} />
               <div className="row gap-6">
                 {alert.messageId && (
                   <ActionButton
@@ -207,10 +220,12 @@ export function AlertView({ alert, queued }: { alert: Alert; queued: number }) {
 }
 
 /** Responde un permiso de Claude Code y saca la tarjeta. */
-export function respondPermission(alert: Alert, decision: PermissionDecision) {
+export function respondPermission(alert: Alert, decision: PermissionDecision, reply?: PermissionReply) {
   if (!alert.permission) return;
-  ipc.claudePermissionRespond(alert.permission.id, decision).catch(() => {});
+  ipc.claudePermissionRespond(alert.permission.id, decision, reply).catch(() => {});
   useIsland.getState().dismissAlert(alert.id);
+  // Si escribiste en la tarjeta (otra respuesta, cambios al plan), el foco vuelve a donde estabas.
+  if (["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName ?? "")) ipc.releaseFocus();
   if (decision === "deny") sounds.nope();
   else if (decision !== "ask") sounds.done();
   // "En la terminal": te lleva a la ventana donde está el diálogo.
@@ -224,7 +239,7 @@ export function respondPermission(alert: Alert, decision: PermissionDecision) {
 export function PermissionCard({ alert, queued }: { alert: Alert; queued: number }) {
   const showMascot = useIsland((s) => s.prefs.mascot);
   const perm = alert.permission!;
-  const color = "#d97757";
+  const color = appAccent(alert);
   return (
     <div className="alert permission" onClick={(e) => e.stopPropagation()}>
       <div className="alert-glow" style={{ background: `radial-gradient(90% 160% at 0% 50%, ${color}38, transparent 65%)` }} />

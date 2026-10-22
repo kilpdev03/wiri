@@ -1,6 +1,6 @@
 import { motion } from "motion/react";
 import type { Media, Privacy, Reminder } from "../../lib/ipc";
-import { CameraIcon, MicIcon } from "../icons";
+import { CameraIcon, MicIcon, MicOffIcon } from "../icons";
 import { useIsland } from "../../store/islandStore";
 import { Mascot, type Mood } from "../Mascot";
 import { Bars } from "../parts";
@@ -71,9 +71,9 @@ export function PrivacyPip({ privacy }: { privacy: Privacy }) {
         </span>
       )}
       {mic && (
-        <span className="pip mic">
+        <span className={`pip mic ${privacy.micMuted ? "muted" : ""}`}>
           <span className="privacy-dot mic" />
-          <MicIcon size={10} />
+          {privacy.micMuted ? <MicOffIcon size={10} /> : <MicIcon size={10} />}
         </span>
       )}
     </div>

@@ -4,8 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { useNow } from "../../lib/hooks";
 import { ACCENTS, ANCHORS, DEFAULT_APPEARANCE, ISLAND_COLORS, SHAPES, SIZES } from "../../lib/appearance";
 import { endMs, isLive, joinLabel, nextMeeting, startMs, timeRange, untilLabel } from "../../lib/calendar";
-import { formatDuration, resetLabel, type ClaudeSession, type ClaudeStatus, type UsageWindow } from "../../lib/claude";
-import { ipc, prettyShortcut, type Alert, type CalEvent, type ClaudeHooksStatus, type MailItem, type Reminder } from "../../lib/ipc";
+import { agentMeta, formatDuration, resetLabel, type ClaudeSession, type ClaudeStatus, type ClaudeStep, type UsageWindow } from "../../lib/claude";
+import { ipc, prettyShortcut, type Alert, type AgentStatus, type BtBattery, type CalEvent, type ClipItem, type ClaudeHooksStatus, type MailItem, type Power, type Reminder } from "../../lib/ipc";
 import { MAIL_ALERT_MODES, MAIL_FILTERS, matchesFilter, type MailAlertMode } from "../../lib/mailFilters";
 import { formatClock, formatCountdown, parseReminder } from "../../lib/parseReminder";
 import { sounds } from "../../lib/sounds";
@@ -20,10 +20,14 @@ import {
   CalendarIcon,
   ChatIcon,
   CheckIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
+  ClipboardIcon,
   ClockIcon,
   CloseIcon,
 
   ExternalIcon,
+  HeadphonesIcon,
   MailIcon,
 
   PlusIcon,
@@ -36,17 +40,24 @@ import {
   VolumeOffIcon,
 } from "../icons";
 import { AudioDevicesCard } from "../views/DevicePicker";
+import { Battery } from "../views/Osd";
 import { MailDetail } from "../views/MailDetail";
 import { ResolveSheet } from "../views/ResolveSheet";
+import { DiffSheet, StepList } from "../views/ClaudeSteps";
+import { RecapSheet } from "../views/Recap";
+import { GithubView } from "./GithubView";
+import { runDemo } from "../../lib/demo";
+import { buddyFlyHome, buddyFlyOut } from "../../lib/buddy";
+import { OUTFIT_CYCLE, OUTFITS, type OutfitPref } from "../../lib/outfits";
 import { appName, Artwork, Controls, Progress, TrackInfo } from "../views/MediaViews";
 
 const GMAIL_URL = "https://mail.google.com/mail/u/0/#inbox";
 
-export function appAccent(alert: Pick<Alert, "kind" | "app">): string {
+export function appAccent(alert: Pick<Alert, "kind" | "app" | "agent">): string {
   if (alert.kind === "reminder") return "#ff9f0a";
   if (alert.kind === "mail") return "#ea4335";
   if (alert.kind === "calendar") return "#4285f4";
-  if (alert.kind === "claude") return "#d97757";
+  if (alert.kind === "claude") return agentMeta(alert.agent).color;
   if (alert.kind === "update") return "#30d158";
   const app = alert.app?.toLowerCase() ?? "";
   if (app.includes("whatsapp")) return "#25d366";
@@ -74,7 +85,7 @@ function remindLater(alert: Alert, minutes: number) {
 /* ---------------------------------------------------------------- Inicio */
 
 export function HomeTab({ color }: { color: string }) {
-  const { media, reminders, history, gmail, calendar, unseen, setTab } = useIsland();
+  const { media, reminders, history, gmail, calendar, unseen, setTab, power, bluetooth } = useIsland();
   const now = useNow(1000);
   const next = reminders[0];
   const meeting = nextMeeting(calendar?.events ?? [], now);
@@ -83,7 +94,8 @@ export function HomeTab({ color }: { color: string }) {
   const lastNotif = history.find((a) => a.kind === "notification");
 
   return (
-    <div className="home-grid">
+    <div className="col gap-8 fill">
+    <div className="home-grid grow min-h-0">
       <Card className="now-playing" index={0} onClick={() => setTab("music")}>
         {media ? (
           <>
@@ -177,6 +189,37 @@ export function HomeTab({ color }: { color: string }) {
         </Card>
       </div>
     </div>
+    {hasBatteryInfo(power, bluetooth) && <BatteryStrip />}
+    </div>
+  );
+}
+
+/** Alto que suma la franja de batería al panel de Inicio (tarjeta + separación). */
+export const BATTERY_STRIP_H = 46;
+
+/** Hay algo que mostrar en la franja de batería (laptop o aparatos Bluetooth). */
+export const hasBatteryInfo = (power: Power | null, bluetooth: BtBattery[]) => !!power?.hasBattery || bluetooth.length > 0;
+
+/** Batería de esta PC y de los aparatos Bluetooth, siempre a la vista en Inicio. */
+function BatteryStrip() {
+  const { power, bluetooth } = useIsland(useShallow((s) => ({ power: s.power, bluetooth: s.bluetooth })));
+  return (
+    <Card index={4} className="battery-strip">
+      {power?.hasBattery && (
+        <div className="battery-chip" title={power.charging ? "Cargando" : "Sin cargador"}>
+          <Battery percent={power.percent} charging={power.charging} />
+          <span className="text-sm">Esta PC</span>
+          <span className="caption">{power.percent}%</span>
+        </div>
+      )}
+      {bluetooth.map((d) => (
+        <div key={d.name} className="battery-chip min-w-0" title={d.name}>
+          <span className="mini-icon" style={{ color: d.percent <= 20 ? "#ff453a" : "#64d2ff" }}><HeadphonesIcon size={14} /></span>
+          <span className="text-sm truncate">{d.name}</span>
+          <span className="caption" style={{ color: d.percent <= 20 ? "#ff453a" : undefined }}>{d.percent}%</span>
+        </div>
+      ))}
+    </Card>
   );
 }
 
@@ -901,6 +944,124 @@ const ACCESS_LABEL: Record<string, { text: string; color: string }> = {
   unknown: { text: "Conectando…", color: "#8e8e93" },
 };
 
+/* ---------------------------------------------------------------- Portapapeles */
+
+/** Una línea legible: sin saltos ni espacios repetidos. */
+const clipPreview = (text: string) => text.replace(/\s+/g, " ").trim();
+
+function ClipRow({ item, index, copied, onCopy }: { item: ClipItem; index: number; copied: boolean; onCopy: (item: ClipItem) => void }) {
+  const lines = item.text.split("\n").length;
+  return (
+    <motion.div
+      layout="position"
+      className="list-row clip-row"
+      initial={{ opacity: 0, x: -12 }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, x: 40, height: 0, paddingTop: 0, paddingBottom: 0 }}
+      transition={{ type: "spring", stiffness: 420, damping: 32, delay: Math.min(index, 8) * 0.03 }}
+      onClick={() => onCopy(item)}
+      title={item.text.length > 600 ? `${item.text.slice(0, 600)}…` : item.text}
+    >
+      <span className="mini-icon" style={{ color: copied ? "#30d158" : "var(--text-faint)" }}>
+        {copied ? <CheckIcon size={14} /> : <ClipboardIcon size={14} />}
+      </span>
+      <div className="col grow min-w-0">
+        <span className="text-sm truncate">{clipPreview(item.text)}</span>
+        <span className="caption">
+          {copied ? "Copiado" : relativeTime(item.copiedMs)}
+          {lines > 1 && ` · ${lines} líneas`}
+        </span>
+      </div>
+      <div className="row-actions">
+        <IconButton onClick={() => ipc.clipboardRemove(item.id)} title="Quitar del historial" size={26}>
+          <TrashIcon size={13} />
+        </IconButton>
+      </div>
+    </motion.div>
+  );
+}
+
+/** Lo último que copiaste (texto). Un clic lo vuelve a copiar para pegarlo donde quieras. */
+export function ClipboardTab() {
+  const items = useIsland((s) => s.clipboard);
+  const enabled = useIsland((s) => s.prefs.clipboard);
+  const setPref = useIsland((s) => s.setPref);
+  const shortcut = useIsland((s) => s.shortcuts.clipboard);
+  const [search, setSearch] = useState("");
+  const [copiedId, setCopiedId] = useState<number | null>(null);
+  const q = search.trim().toLowerCase();
+  const shown = q ? items.filter((i) => i.text.toLowerCase().includes(q)) : items;
+
+  const copy = (item: ClipItem) => {
+    ipc
+      .clipboardCopy(item.id)
+      .then(() => {
+        sounds.done();
+        setCopiedId(item.id);
+        setTimeout(() => setCopiedId((id) => (id === item.id ? null : id)), 1400);
+      })
+      .catch(() => sounds.nope());
+  };
+
+  return (
+    <Card className="fill-card list-card">
+      <div className="list-header">
+        <span className="title">Copiado</span>
+        {enabled && items.length > 0 && (
+          <div className="mail-search">
+            <SearchIcon size={13} />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === "Escape") setSearch("");
+                if (e.key === "Enter" && shown[0]) copy(shown[0]);
+              }}
+              placeholder="Buscar en lo copiado (Enter copia el primero)"
+              spellCheck={false}
+            />
+          </div>
+        )}
+        <span className="grow" />
+        <button
+          className={`dnd-btn ${enabled ? "" : "on"}`}
+          onClick={() => setPref("clipboard", !enabled)}
+          title={enabled ? "Dejar de guardar lo que copias (borra el historial)" : "Volver a guardar lo que copias"}
+        >
+          <motion.span className="dnd-dot" animate={{ scale: enabled ? 0.6 : 1 }} />
+          {enabled ? "Pausar" : "En pausa"}
+        </button>
+        {items.length > 0 && <button className="link-btn" onClick={() => ipc.clipboardClear()}>Limpiar</button>}
+      </div>
+
+      {!enabled ? (
+        <Empty
+          icon={<ClipboardIcon size={22} />}
+          title="Historial en pausa"
+          body="Wiri no está guardando lo que copias. Actívalo para volver a pegar textos de hace un rato."
+        />
+      ) : shown.length ? (
+        <div className="list">
+          <AnimatePresence initial={false}>
+            {shown.map((item, i) => <ClipRow key={item.id} item={item} index={i} copied={copiedId === item.id} onCopy={copy} />)}
+          </AnimatePresence>
+        </div>
+      ) : (
+        <Empty
+          icon={q ? <SearchIcon size={22} /> : <ClipboardIcon size={22} />}
+          title={q ? "Nada coincide" : "Nada copiado todavía"}
+          body={
+            q
+              ? "Prueba con otra palabra."
+              : `Copia cualquier texto y aparecerá aquí${shortcut ? ` (${prettyShortcut(shortcut)} abre esta pestaña)` : ""}. Solo se guarda en memoria y se borra al cerrar Wiri; las contraseñas de gestores no se guardan.`
+          }
+        />
+      )}
+    </Card>
+  );
+}
+
 export function NotificationsTab() {
   const notifs = useIsland(useShallow((s) => s.history.filter((a) => a.kind === "notification")));
   const clear = useIsland((s) => s.clearHistory);
@@ -972,6 +1133,70 @@ export function NotificationsTab() {
 }
 
 /* ---------------------------------------------------------------- Ajustes */
+
+/** "Control"+"K" del teclado → "ctrl+k" (formato de los atajos globales). */
+function accelFromEvent(e: KeyboardEvent): string | null {
+  const mods = [e.ctrlKey && "ctrl", e.altKey && "alt", e.shiftKey && "shift", e.metaKey && "super"].filter(Boolean) as string[];
+  if (["Control", "Alt", "Shift", "Meta"].includes(e.key)) return null;
+  let key: string | null = null;
+  if (/^Key[A-Z]$/.test(e.code)) key = e.code.slice(3).toLowerCase();
+  else if (/^Digit\d$/.test(e.code)) key = e.code.slice(5);
+  else if (/^F\d{1,2}$/.test(e.code)) key = e.code.toLowerCase();
+  else if (e.code === "Space") key = "space";
+  if (!key || !mods.length) return null;
+  return [...mods, key].join("+");
+}
+
+/** Un atajo global que se cambia con un clic y la combinación nueva. */
+function ShortcutRow({ name, label, current }: { name: string; label: string; current?: string }) {
+  const setShortcuts = useIsland((s) => s.setShortcuts);
+  const [recording, setRecording] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!recording) return;
+    const onKey = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (e.key === "Escape") return setRecording(false);
+      const accel = accelFromEvent(e);
+      if (!accel) return;
+      setRecording(false);
+      ipc
+        .setShortcut(name, accel)
+        .then((all) => {
+          setShortcuts(all);
+          setError(null);
+          sounds.done();
+        })
+        .catch((err) => {
+          setError(String(err));
+          sounds.nope();
+        });
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [recording]);
+
+  return (
+    <div className="shortcut-row" title={error ?? undefined}>
+      <span>
+        {label}
+        {error && <span className="caption" style={{ color: "#ff6b5e" }}> · {error}</span>}
+      </span>
+      <button
+        className={`shortcut-btn ${recording ? "recording" : ""}`}
+        onClick={() => {
+          ipc.grabFocus();
+          setError(null);
+          setRecording((r) => !r);
+        }}
+      >
+        {recording ? <span className="caption">Presiona la combinación…</span> : <Kbd>{prettyShortcut(current ?? "") || "—"}</Kbd>}
+      </button>
+    </div>
+  );
+}
 
 function Toggle({ label, hint, value, onChange }: { label: string; hint: string; value: boolean; onChange: (v: boolean) => void }) {
   return (
@@ -1077,7 +1302,7 @@ const SETTINGS_SECTIONS: { id: SettingsSection; label: string }[] = [
 ];
 
 function AppearanceSettings() {
-  const { prefs, setPref } = useIsland();
+  const { prefs, setPref, buddyAway } = useIsland();
   return (
     <div className="col gap-8">
       <SettingRow label="Color de la isla">
@@ -1085,6 +1310,25 @@ function AppearanceSettings() {
       </SettingRow>
       <SettingRow label="Acento y Bolo">
         <Swatches value={prefs.accent} options={ACCENTS} onChange={(v) => setPref("accent", v)} />
+      </SettingRow>
+      <SettingRow label="Ropa de Bolo">
+        <div className="row gap-10">
+          <label className="alert-select" title="También con clic derecho sobre Bolo">
+            <select value={prefs.outfit} onChange={(e) => setPref("outfit", e.target.value as OutfitPref)}>
+              {OUTFIT_CYCLE.map((o) => (
+                <option key={o} value={o}>{OUTFITS[o].label}</option>
+              ))}
+            </select>
+          </label>
+          <button
+            className={`dnd-btn ${buddyAway ? "on" : ""}`}
+            onClick={() => (buddyAway ? buddyFlyHome(true) : buddyFlyOut())}
+            title="Bolo vive en el escritorio: arrástralo a donde quieras; suéltalo en la isla o doble clic para traerlo"
+          >
+            <motion.span className="dnd-dot" animate={{ scale: buddyAway ? 1 : 0.6 }} />
+            En el escritorio
+          </button>
+        </div>
       </SettingRow>
       <SettingRow label="Tamaño">
         <Segmented id="size" value={prefs.size} options={SIZES} onChange={(v) => setPref("size", v)} />
@@ -1147,18 +1391,29 @@ export function SettingsTab() {
             <Toggle label="Abrir al pasar el mouse" hint="Si no, se abre con clic o atajo" value={prefs.hoverOpen} onChange={(v) => setPref("hoverOpen", v)} />
             <Toggle label="Sonidos" hint="Avisos, recordatorios y clics" value={prefs.sounds} onChange={(v) => setPref("sounds", v)} />
             <Toggle label="Bolo" hint="La mascota que vive en la isla" value={prefs.mascot} onChange={(v) => setPref("mascot", v)} />
+            <Toggle label="Historial del portapapeles" hint="Guarda en memoria lo último que copias (texto); se borra al cerrar Wiri" value={prefs.clipboard} onChange={(v) => setPref("clipboard", v)} />
             <Toggle label="Aprobar permisos de Claude" hint="Permitir o denegar desde la isla; si no, siguen en la terminal" value={prefs.claudeApprove} onChange={(v) => setPref("claudeApprove", v)} />
             <UpdateRow />
+            <div className="shortcut-row">
+              <span>
+                Modo demo <span className="caption">· un recorrido con datos de ejemplo; no guarda nada</span>
+              </span>
+              <button className="pill-btn" onClick={() => runDemo()}>Probar</button>
+            </div>
           </div>
         )}
         {section === "shortcuts" && (
       <div className="col gap-6">
         <span className="section-title">Atajos</span>
-        <div className="shortcut-row"><span>Abrir o cerrar la isla</span><Kbd>{prettyShortcut(shortcuts.toggle) || "—"}</Kbd></div>
-        <div className="shortcut-row"><span>Nuevo recordatorio</span><Kbd>{prettyShortcut(shortcuts["quick-add"]) || "—"}</Kbd></div>
-        <div className="shortcut-row"><span>Cambiar pestaña</span><Kbd>1–5</Kbd></div>
-        <div className="shortcut-row"><span>Reproducir · anterior · siguiente</span><span className="row gap-4"><Kbd>Espacio</Kbd><Kbd>←</Kbd><Kbd>→</Kbd></span></div>
-        <div className="shortcut-row"><span>Fijar · cerrar</span><span className="row gap-4"><Kbd>P</Kbd><Kbd>Esc</Kbd></span></div>
+        <ShortcutRow name="toggle" label="Abrir o cerrar la isla" current={shortcuts.toggle} />
+        <ShortcutRow name="quick-add" label="Nuevo recordatorio" current={shortcuts["quick-add"]} />
+        <ShortcutRow name="mic-toggle" label="Silenciar micrófono" current={shortcuts["mic-toggle"]} />
+        <ShortcutRow name="clipboard" label="Ver lo copiado" current={shortcuts.clipboard} />
+        <span className="caption">Haz clic en un atajo y presiona la combinación nueva (Esc cancela).</span>
+        <div className="shortcut-row"><span>Cambiar pestaña</span><span className="row gap-4"><Kbd>←</Kbd><Kbd>→</Kbd><Kbd>1–8</Kbd></span></div>
+        <div className="shortcut-row"><span>Moverse por la pestaña · abrir</span><span className="row gap-4"><Kbd>↑</Kbd><Kbd>↓</Kbd><Kbd>Enter</Kbd></span></div>
+        <div className="shortcut-row"><span>Reproducir · anterior · siguiente</span><span className="row gap-4"><Kbd>Espacio</Kbd><Kbd>Shift ←</Kbd><Kbd>Shift →</Kbd></span></div>
+        <div className="shortcut-row"><span>Soltar la selección</span><Kbd>Esc</Kbd></div>
         <span className="caption" style={{ marginTop: 2 }}>«Iniciar con Windows» está en el ícono de la bandeja.</span>
       </div>
         )}
@@ -1213,10 +1468,72 @@ function UsageBars() {
   );
 }
 
-function SessionRow({ s, index }: { s: ClaudeSession; index: number }) {
+/** Conectar otros agentes (Codex, Gemini CLI) con el mismo relé. */
+function OtherAgents() {
+  const [list, setList] = useState<AgentStatus[]>([]);
+  const [note, setNote] = useState<string | null>(null);
+  const refresh = () => ipc.agentsStatus().then(setList).catch(() => {});
+  useEffect(() => {
+    refresh();
+  }, []);
+  if (!list.length) return null;
+
+  const toggle = async (a: AgentStatus) => {
+    try {
+      if (a.installed) {
+        await ipc.agentHooksUninstall(a.id);
+        setNote(`${a.name}: hooks quitados (respaldo guardado)`);
+      } else {
+        await ipc.agentHooksInstall(a.id);
+        setNote(a.id === "codex" ? "Codex: en tu próxima sesión acepta los hooks con /hooks" : `${a.name}: conectado`);
+      }
+      sounds.done();
+    } catch (e) {
+      setNote(String(e));
+      sounds.nope();
+    }
+    refresh();
+  };
+
+  return (
+    <div className="row gap-6 agents-row">
+      <span className="caption">Otros agentes:</span>
+      {list.map((a) => (
+        <button
+          key={a.id}
+          className={`muted-chip agent-chip ${a.installed ? "on" : ""}`}
+          style={{ color: a.installed ? agentMeta(a.id).color : undefined }}
+          onClick={() => toggle(a)}
+          title={a.error ?? (a.installed ? `Quitar los hooks de Wiri de ${a.configPath}` : `Agregar los hooks de Wiri a ${a.configPath}${a.detected ? "" : " (no lo encontré instalado)"}`)}
+        >
+          <span className="dot" style={{ background: a.installed ? agentMeta(a.id).color : "var(--text-faint)" }} />
+          {a.name}
+          {a.installed ? " · conectado" : " · conectar"}
+        </button>
+      ))}
+      {note && <span className="caption truncate">{note}</span>}
+    </div>
+  );
+}
+
+function SessionRow({
+  s,
+  index,
+  expanded,
+  onToggle,
+  onOpenDiff,
+}: {
+  s: ClaudeSession;
+  index: number;
+  expanded: boolean;
+  onToggle: () => void;
+  onOpenDiff: (step: ClaudeStep) => void;
+}) {
   const now = useNow(1000, s.status === "working");
   const meta = CLAUDE_STATUS[s.status];
+  const steps = s.steps ?? [];
   return (
+    <>
     <motion.div
       layout="position"
       className="list-row session-row"
@@ -1231,6 +1548,9 @@ function SessionRow({ s, index }: { s: ClaudeSession; index: number }) {
       <div className="col grow min-w-0">
         <div className="row gap-6 min-w-0">
           <span className="text-sm truncate" style={{ flexShrink: 0, maxWidth: 200 }}>{s.project}</span>
+          {s.agent && s.agent !== "claude" && (
+            <span className="badge nowrap" style={{ color: agentMeta(s.agent).color }}>{agentMeta(s.agent).short}</span>
+          )}
           <span className="caption nowrap" style={{ color: meta.color }}>{meta.label}</span>
         </div>
         <span className="caption truncate">
@@ -1250,7 +1570,12 @@ function SessionRow({ s, index }: { s: ClaudeSession; index: number }) {
       <span className="caption nowrap tabular">
         {s.status === "working" ? formatDuration(now - s.turnStartedMs) : relativeTime(s.lastEventMs)}
       </span>
+      <IconButton onClick={onToggle} active={expanded} title={expanded ? "Ocultar pasos" : `Ver pasos (${steps.length})`} size={26}>
+        {expanded ? <ChevronUpIcon size={13} /> : <ChevronDownIcon size={13} />}
+      </IconButton>
     </motion.div>
+    <AnimatePresence initial={false}>{expanded && <StepList key="steps" steps={steps} onOpen={onOpenDiff} />}</AnimatePresence>
+    </>
   );
 }
 
@@ -1298,6 +1623,25 @@ export function ClaudeTab() {
   const installed = useIsland((s) => s.claudeHooks);
   const [status, setStatus] = useState<ClaudeHooksStatus | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [diffStep, setDiffStep] = useState<ClaudeStep | null>(null);
+  const recapOpen = useIsland((s) => s.recapOpen);
+  const setRecapOpen = useIsland((s) => s.setRecapOpen);
+  const [view, setView] = useState<"sessions" | "github">("sessions");
+  const ghCount = useIsland((s) => (s.github?.reviews.length ?? 0) + (s.github?.mine.filter((p) => p.ci === "FAILURE" || p.ci === "ERROR").length ?? 0));
+
+  // Esc cierra primero la hoja abierta (diferencia o resumen), no el panel.
+  useEffect(() => {
+    if (!diffStep && !recapOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopImmediatePropagation();
+      setDiffStep(null);
+      setRecapOpen(false);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [diffStep, recapOpen]);
 
   const refresh = () =>
     ipc.claudeHooksStatus().then((st) => {
@@ -1323,10 +1667,16 @@ export function ClaudeTab() {
   return (
     <Card className="fill-card list-card">
       <div className="list-header">
-        <span className="title">Claude Code</span>
-        <span className="status-pill"><span className="dot" style={{ background: "#30d158" }} />Hooks conectados</span>
+        <Segmented
+          id="agents-view"
+          value={view}
+          options={{ sessions: { label: "Sesiones" }, github: { label: ghCount ? `GitHub · ${ghCount}` : "GitHub" } }}
+          onChange={setView}
+        />
+        {view === "sessions" && <span className="status-pill"><span className="dot" style={{ background: "#30d158" }} />Hooks conectados</span>}
         <span className="grow" />
         {note && <span className="caption truncate" style={{ maxWidth: 220 }}>{note}</span>}
+        <button className="link-btn" onClick={() => setRecapOpen(true)} title="Resumen de la semana">Semana</button>
         {status?.otherStatusLine && <span className="caption" title="Tienes otra línea de estado en Claude Code; Wiri no la reemplazó, así que no recibe el contexto ni los límites del plan.">Sin datos de uso</span>}
         <button
           className="link-btn"
@@ -1339,11 +1689,25 @@ export function ClaudeTab() {
           Desinstalar
         </button>
       </div>
+      {view === "github" ? (
+        <GithubView />
+      ) : (
+      <>
       <UsageBars />
+      <OtherAgents />
       {list.length ? (
         <div className="list">
           <AnimatePresence initial={false}>
-            {list.map((s, i) => <SessionRow key={s.id} s={s} index={i} />)}
+            {list.map((s, i) => (
+              <SessionRow
+                key={s.id}
+                s={s}
+                index={i}
+                expanded={openId === s.id}
+                onToggle={() => setOpenId(openId === s.id ? null : s.id)}
+                onOpenDiff={setDiffStep}
+              />
+            ))}
           </AnimatePresence>
         </div>
       ) : (
@@ -1353,6 +1717,10 @@ export function ClaudeTab() {
           body="Escríbele algo a Claude Code (terminal, VS Code o la app) y la sesión aparecerá aquí en vivo."
         />
       )}
+      </>
+      )}
+      <AnimatePresence>{diffStep && <DiffSheet step={diffStep} onClose={() => setDiffStep(null)} />}</AnimatePresence>
+      <AnimatePresence>{recapOpen && <RecapSheet onClose={() => setRecapOpen(false)} />}</AnimatePresence>
     </Card>
   );
 }

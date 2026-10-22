@@ -6,17 +6,27 @@ import { formatClock, formatCountdown } from "../../lib/parseReminder";
 import { useIsland } from "../../store/islandStore";
 import { Mascot, type Mood } from "../Mascot";
 import { Bars } from "../parts";
-import { BellIcon, CalendarIcon, CameraIcon, ChatIcon, MailIcon, MicIcon, SparkIcon, TimerIcon } from "../icons";
+import { BellIcon, CalendarIcon, CameraIcon, ChatIcon, MailIcon, MicIcon, MicOffIcon, SparkIcon, TimerIcon } from "../icons";
+import { toggleMic } from "../../lib/mic";
 import { untilLabel } from "../../lib/calendar";
 import { Artwork } from "./MediaViews";
 
 /** Indicador pequeño a la derecha de la barra compacta. */
-function Chip({ children, color }: { children: ReactNode; color: string }) {
+function Chip({ children, color, onClick, title }: { children: ReactNode; color: string; onClick?: () => void; title?: string }) {
   return (
     <motion.span
       layout
-      className="chip"
+      className={`chip ${onClick ? "chip-btn" : ""}`}
       style={{ color }}
+      title={title}
+      onClick={
+        onClick &&
+        ((e) => {
+          // Sin abrir el panel: el clic es solo para esta acción.
+          e.stopPropagation();
+          onClick();
+        })
+      }
       initial={{ opacity: 0, scale: 0.4, y: -6 }}
       animate={{ opacity: 1, scale: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.4 }}
@@ -60,7 +70,8 @@ export function Compact({
     return all.find((c) => c.status === "waiting") ?? all.find((c) => c.status === "working");
   });
   const shortcut = useIsland((s) => s.shortcuts.toggle);
-  const showMascot = useIsland((s) => s.prefs.mascot);
+  const micShortcut = useIsland((s) => s.shortcuts["mic-toggle"]);
+  const showMascot = useIsland((s) => s.prefs.mascot && !s.buddyAway);
   const now = useNow(1000);
 
   return (
@@ -100,6 +111,18 @@ export function Compact({
           {privacyApp && (
             <Chip key="privacy" color={privacy.cam.length ? "#30d158" : "#ff9f0a"}>
               {privacy.cam.length ? <CameraIcon size={12} /> : <MicIcon size={12} />} {privacyApp}
+            </Chip>
+          )}
+          {/* Micrófono en uso: un clic lo silencia o lo reactiva. */}
+          {privacy.mic.length > 0 && (
+            <Chip
+              key="mic-mute"
+              color={privacy.micMuted ? "#ff453a" : "var(--text-dim)"}
+              onClick={toggleMic}
+              title={`${privacy.micMuted ? "Reactivar" : "Silenciar"} micrófono${micShortcut ? ` (${prettyShortcut(micShortcut)})` : ""}`}
+            >
+              {privacy.micMuted ? <MicOffIcon size={12} /> : <MicIcon size={12} />}
+              {privacy.micMuted && " Silenciado"}
             </Chip>
           )}
           {meeting && (

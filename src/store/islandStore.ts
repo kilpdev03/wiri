@@ -1,21 +1,28 @@
 import { create } from "zustand";
-import type { Alert, AlertKind, CalendarStatus, GmailStatus, MailItem, Media, Power, Privacy, Reminder, UpdateInfo, Volume } from "../lib/ipc";
+import type { Alert, AlertKind, BtBattery, CalendarStatus, ClipItem, GithubStatus, GmailStatus, MailItem, Media, Power, Privacy, Reminder, UpdateInfo, Volume } from "../lib/ipc";
 import { DEFAULT_APPEARANCE, type Appearance } from "../lib/appearance";
 import type { MailAlertMode, MailFilter } from "../lib/mailFilters";
+import type { OutfitPref } from "../lib/outfits";
 import type { ClaudeSession, ClaudeUsage } from "../lib/claude";
 
 /** Menor número = más urgente. La música no compite: es actividad de fondo. */
 const PRIORITY: Record<AlertKind, number> = { reminder: 0, claude: 1, notification: 1, mail: 2, calendar: 3, update: 4 };
 
-export type Tab = "home" | "music" | "mail" | "reminders" | "notifications" | "claude" | "settings";
-export const TABS: Tab[] = ["home", "music", "mail", "reminders", "notifications", "claude", "settings"];
+export type Tab = "home" | "music" | "mail" | "reminders" | "notifications" | "claude" | "chat" | "clipboard" | "settings";
+export const TABS: Tab[] = ["home", "music", "mail", "reminders", "notifications", "claude", "chat", "clipboard", "settings"];
+
+export type ChatMsg = { role: "user" | "claude" | "error"; text: string; files?: string[] };
+/** Charla con Claude desde la isla; `sessionId` la continúa en Claude Code. */
+export type ChatState = { messages: ChatMsg[]; sessionId: string | null; pending: boolean; files: string[] };
 
 /** Aviso breve del sistema (como el flyout de Windows, pero en la isla). */
 export type Osd =
   | { kind: "volume"; volume: Volume }
   | { kind: "device"; name: string }
   | { kind: "power"; power: Power }
-  | { kind: "battery-low"; power: Power };
+  | { kind: "battery-low"; power: Power }
+  | { kind: "bt-low"; device: BtBattery }
+  | { kind: "mic"; muted: boolean };
 
 /** Reacciones puntuales de la mascota (las consume en su loop de animación). */
 export type Reaction = "hello" | "jump" | "happy" | "nope";
@@ -36,6 +43,10 @@ type Prefs = Appearance & {
   dnd: boolean;
   /** Apps cuyas notificaciones se ignoran por completo. */
   mutedApps: string[];
+  /** Guardar lo que copias (solo texto, en memoria). */
+  clipboard: boolean;
+  /** Ropa de la mascota ("auto": según la temporada). */
+  outfit: OutfitPref;
 };
 
 const PREFS_KEY = "win-island:prefs";
@@ -51,6 +62,8 @@ const DEFAULT_PREFS: Prefs = {
   claudeTarget: "app",
   dnd: false,
   mutedApps: [],
+  clipboard: true,
+  outfit: "auto",
 };
 
 function loadPrefs(): Prefs {
@@ -83,6 +96,16 @@ type IslandStore = {
   resolveMail: MailItem | null;
   osd: (Osd & { until: number }) | null;
   power: Power | null;
+  bluetooth: BtBattery[];
+  clipboard: ClipItem[];
+  /** Resumen semanal de Claude abierto en la pestaña Claude. */
+  recapOpen: boolean;
+  chat: ChatState;
+  github: GithubStatus | null;
+  /** Bolo está en el escritorio (su ventana fuera de la isla). */
+  buddyAway: boolean;
+  /** Arrastrando archivos sobre la isla. */
+  dropHover: boolean;
   privacy: Privacy;
   /** Acceso a las notificaciones de Windows: "allowed" | "denied" | "unspecified" | "error" | "unknown". */
   notifAccess: string;
@@ -111,6 +134,13 @@ type IslandStore = {
   setResolveMail: (m: MailItem | null) => void;
   showOsd: (osd: Osd, ms: number) => void;
   setPower: (p: Power) => void;
+  setBluetooth: (list: BtBattery[]) => void;
+  setClipboard: (items: ClipItem[]) => void;
+  setRecapOpen: (open: boolean) => void;
+  setChat: (patch: Partial<ChatState>) => void;
+  setGithub: (g: GithubStatus) => void;
+  setBuddyAway: (away: boolean) => void;
+  setDropHover: (on: boolean) => void;
   setPrivacy: (p: Privacy) => void;
   setNotifAccess: (a: string) => void;
   /** Guarda en el historial sin mostrar alerta (No molestar). */
@@ -155,7 +185,14 @@ export const useIsland = create<IslandStore>((set) => ({
   resolveMail: null,
   osd: null,
   power: null,
-  privacy: { mic: [], cam: [] },
+  bluetooth: [],
+  clipboard: [],
+  recapOpen: false,
+  chat: { messages: [], sessionId: null, pending: false, files: [] },
+  github: null,
+  buddyAway: false,
+  dropHover: false,
+  privacy: { mic: [], cam: [], micMuted: false },
   gmail: { configured: false, connected: false, email: null, unreadCount: 0, messages: [], error: null, lastSyncMs: 0 },
 
   hovered: false,
@@ -180,6 +217,13 @@ export const useIsland = create<IslandStore>((set) => ({
   setResolveMail: (resolveMail) => set({ resolveMail }),
   showOsd: (osd, ms) => set({ osd: { ...osd, until: Date.now() + ms } }),
   setPower: (power) => set({ power }),
+  setBluetooth: (bluetooth) => set({ bluetooth }),
+  setClipboard: (clipboard) => set({ clipboard }),
+  setRecapOpen: (recapOpen) => set({ recapOpen }),
+  setChat: (patch) => set(({ chat }) => ({ chat: { ...chat, ...patch } })),
+  setGithub: (github) => set({ github }),
+  setBuddyAway: (buddyAway) => set({ buddyAway }),
+  setDropHover: (dropHover) => set({ dropHover }),
   setPrivacy: (privacy) => set({ privacy }),
   setNotifAccess: (notifAccess) => set({ notifAccess }),
   logSilently: (incoming) =>
@@ -245,3 +289,14 @@ export const useIsland = create<IslandStore>((set) => ({
       return { prefs };
     }),
 }));
+
+// La isla y la mascota del escritorio son ventanas distintas con la misma página:
+// un ajuste cambiado en una (ropa, acento…) llega a la otra por el evento `storage`.
+window.addEventListener("storage", (e) => {
+  if (e.key !== PREFS_KEY || !e.newValue) return;
+  try {
+    useIsland.setState({ prefs: { ...DEFAULT_PREFS, ...JSON.parse(e.newValue) } });
+  } catch {
+    /* JSON roto: se queda con lo que tenía */
+  }
+});

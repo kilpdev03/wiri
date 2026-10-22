@@ -4,6 +4,13 @@ import App from "./App";
 import "./styles.css";
 
 async function start() {
+  // La mascota del escritorio es otra ventana con la misma página.
+  if (new URLSearchParams(location.search).has("buddy")) {
+    const { Buddy } = await import("./Buddy");
+    document.body.classList.add("buddy-body");
+    ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(<Buddy />);
+    return;
+  }
   // Fuera de Tauri (pnpm dev en el navegador) se usa un backend simulado.
   if (!("__TAURI_INTERNALS__" in window)) {
     const { installMock } = await import("./dev/mock");

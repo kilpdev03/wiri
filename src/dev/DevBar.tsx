@@ -23,6 +23,7 @@ export function DevBar() {
       {btn("Silencio", demo.mute)}
       {btn("Audífonos", demo.device)}
       {btn("Cargador", demo.power)}
+      {btn("Bluetooth", demo.bluetooth)}
       {btn("Micrófono", demo.mic)}
       {btn("Actualización", demo.update)}
       {btn("Sin música", demo.noMedia)}
