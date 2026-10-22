@@ -47,6 +47,10 @@ export type Alert = {
   ancestors?: number[];
   /** Claude Code: solicitud de permiso esperando respuesta en la isla. */
   permission?: ClaudePermission;
+  /** Agente de código que la generó (claude, codex, gemini): define su color. */
+  agent?: string;
+  /** Resumen semanal de Claude: Enter lo abre en el panel. */
+  recap?: boolean;
   /** Reuniones: enlace de videollamada. */
   joinUrl?: string | null;
   /** ms Unix en que llegó (lo pone el frontend). */
@@ -75,9 +79,22 @@ export type ClaudePermission = {
   detail: string;
   /** Claude Code ofreció una regla para "permitir siempre". */
   canAlways: boolean;
+  /** AskUserQuestion: preguntas con opciones para contestar desde la isla. */
+  questions?: ClaudeQuestion[];
+  /** ExitPlanMode: el plan a revisar (markdown). */
+  plan?: string;
+};
+
+export type ClaudeQuestion = {
+  question: string;
+  header?: string;
+  multiSelect?: boolean;
+  options: { label: string; description?: string }[];
 };
 
 export type PermissionDecision = "allow" | "deny" | "always" | "ask";
+/** Respuestas a AskUserQuestion (pregunta → respuesta) o motivo de un "deny". */
+export type PermissionReply = { answers?: Record<string, string>; message?: string };
 
 export type ClaudeHooksStatus = {
   installed: boolean;
@@ -93,7 +110,27 @@ export type AudioDevices = { outputs: AudioDevice[]; inputs: AudioDevice[] };
 
 export type Volume = { level: number; muted: boolean };
 export type Power = { hasBattery: boolean; charging: boolean; percent: number };
-export type Privacy = { mic: string[]; cam: string[] };
+export type GhPr = {
+  number: number;
+  title: string;
+  url: string;
+  repo: string;
+  author: string | null;
+  updatedAt: string;
+  draft: boolean;
+  ci: string | null;
+  review: string | null;
+};
+export type GithubStatus = { connected: boolean; login: string | null; mine: GhPr[]; reviews: GhPr[]; error: string | null; updatedMs: number };
+
+/** Otro agente de código (Codex, Gemini CLI) y si tiene los hooks de Wiri. */
+export type AgentStatus = { id: string; name: string; detected: boolean; installed: boolean; configPath: string; error: string | null };
+
+/** Texto copiado (historial en memoria, se borra al cerrar Wiri). */
+export type ClipItem = { id: number; text: string; copiedMs: number };
+/** Aparato Bluetooth que informa su batería (audífonos, mouse, teclado…). */
+export type BtBattery = { name: string; percent: number };
+export type Privacy = { mic: string[]; cam: string[]; micMuted: boolean };
 
 export type CalEvent = {
   id: string;
@@ -132,13 +169,30 @@ export const ipc = {
   claudeHooksStatus: () => invoke<ClaudeHooksStatus>("claude_hooks_status"),
   claudeHooksInstall: () => invoke<string>("claude_hooks_install"),
   claudeHooksUninstall: () => invoke<string>("claude_hooks_uninstall"),
-  claudePermissionRespond: (id: string, decision: PermissionDecision) => invoke<boolean>("claude_permission_respond", { id, decision }),
+  claudePermissionRespond: (id: string, decision: PermissionDecision, reply: PermissionReply = {}) =>
+    invoke<boolean>("claude_permission_respond", { id, decision, answers: reply.answers ?? null, message: reply.message ?? null }),
   claudeProjects: () => invoke<ClaudeProject[]>("claude_projects"),
   claudeLaunch: (cwd: string, title: string, brief: string, target: "app" | "terminal") =>
     invoke<string>("claude_launch", { cwd, title, brief, target }),
   claudeFocus: (ancestors: number[]) => invoke<boolean>("claude_focus", { ancestors }),
   audioDevices: () => invoke<AudioDevices>("audio_devices"),
   audioSetDefault: (id: string) => invoke("audio_set_default", { id }),
+  setShortcut: (name: string, accel: string) => invoke<Record<string, string>>("set_shortcut", { name, accel }),
+  githubStatus: () => invoke<GithubStatus>("github_status"),
+  githubRefresh: () => invoke<GithubStatus>("github_refresh"),
+  agentsStatus: () => invoke<AgentStatus[]>("agents_status"),
+  agentHooksInstall: (id: string) => invoke<string>("agent_hooks_install", { id }),
+  agentHooksUninstall: (id: string) => invoke<string>("agent_hooks_uninstall", { id }),
+  buddyToggle: (show: boolean, x?: number, y?: number) => invoke<boolean>("buddy_toggle", { show, x: x ?? null, y: y ?? null }),
+  claudeChat: (message: string, sessionId: string | null, files: string[]) =>
+    invoke<{ text: string; sessionId: string | null; skipped: string[] }>("claude_chat", { message, sessionId, files }),
+  clipboardHistory: () => invoke<ClipItem[]>("clipboard_history"),
+  clipboardCopy: (id: number) => invoke("clipboard_copy", { id }),
+  clipboardRemove: (id: number) => invoke("clipboard_remove", { id }),
+  clipboardClear: () => invoke("clipboard_clear"),
+  clipboardSetEnabled: (enabled: boolean) => invoke("clipboard_set_enabled", { enabled }),
+  /** Devuelve si el micrófono quedó silenciado. */
+  micToggleMute: () => invoke<boolean>("mic_toggle_mute"),
   setAnchor: (fraction: number) => invoke("set_anchor", { fraction }),
   setHitRect: (x: number, y: number, w: number, h: number) => invoke("set_hit_rect", { x, y, w, h }),
   grabFocus: () => invoke("grab_focus"),
@@ -186,6 +240,10 @@ export const events = {
   onOccluded: (cb: (occluded: boolean) => void) => listen<boolean>("island://occluded", (e) => cb(e.payload)),
   onToggle: (cb: () => void) => listen("island://toggle", () => cb()),
   onQuickAdd: (cb: () => void) => listen("island://quick-add", () => cb()),
+  onMicToggle: (cb: () => void) => listen("island://mic-toggle", () => cb()),
+  onGithub: (cb: (s: GithubStatus) => void) => listen<GithubStatus>("github://status", (e) => cb(e.payload)),
+  onClipboardShortcut: (cb: () => void) => listen("island://clipboard", () => cb()),
+  onClipboard: (cb: (items: ClipItem[]) => void) => listen<ClipItem[]>("clipboard://changed", (e) => cb(e.payload)),
   onAlert: (cb: (a: Alert) => void) => listen<Alert>("island://alert", (e) => cb(e.payload)),
   onRemindersChanged: (cb: (r: Reminder[]) => void) =>
     listen<Reminder[]>("reminder://changed", (e) => cb(e.payload)),
@@ -195,6 +253,7 @@ export const events = {
   onVolume: (cb: (v: Volume) => void) => listen<Volume>("system://volume", (e) => cb(e.payload)),
   onAudioDevice: (cb: (name: string) => void) => listen<string>("system://device", (e) => cb(e.payload)),
   onPower: (cb: (p: Power) => void) => listen<Power>("system://power", (e) => cb(e.payload)),
+  onBluetooth: (cb: (list: BtBattery[]) => void) => listen<BtBattery[]>("system://bluetooth", (e) => cb(e.payload)),
   onPrivacy: (cb: (p: Privacy) => void) => listen<Privacy>("system://privacy", (e) => cb(e.payload)),
   onClaudePermission: (cb: (p: HookPayload & { id: string }) => void) =>
     listen<HookPayload & { id: string }>("claude://permission", (e) => cb(e.payload)),

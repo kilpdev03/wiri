@@ -23,8 +23,9 @@ use windows::Win32::System::Diagnostics::ToolHelp::{
 };
 
 const BUDGET: Duration = Duration::from_millis(300);
-/// Cuánto espera la decisión de un permiso (el hook se instala con timeout 65 s).
-const PERMISSION_WAIT: Duration = Duration::from_secs(60);
+/// Cuánto espera la decisión de un permiso (el hook se instala con timeout 300 s;
+/// Wiri contesta antes: ~1 min para comandos, ~5 min para preguntas y planes).
+const PERMISSION_WAIT: Duration = Duration::from_secs(295);
 
 /// PID propio y de sus ancestros (hasta 12 niveles), del más cercano al más lejano.
 fn ancestors() -> Vec<u32> {
@@ -56,18 +57,34 @@ fn ancestors() -> Vec<u32> {
     chain
 }
 
-/// Convierte la respuesta de Wiri (`{"decision": ...}`) en la salida que entiende Claude Code.
+/// Convierte la respuesta de Wiri (`{"decision", "answers"?, "message"?}`) en la salida que entiende Claude Code.
 fn permission_output(reply: &str, event: &Value) -> Option<String> {
     let body = &reply[reply.find("\r\n\r\n")? + 4..];
     let answer: Value = serde_json::from_str(body).ok()?;
     let decision = match answer["decision"].as_str()? {
-        "allow" => json!({ "behavior": "allow" }),
+        // AskUserQuestion: las respuestas viajan dentro del input de la herramienta.
+        "allow" => match answer["answers"].as_object().filter(|a| !a.is_empty()) {
+            Some(answers) => {
+                let mut input = event["tool_input"].clone();
+                input["answers"] = Value::Object(answers.clone());
+                json!({ "behavior": "allow", "updatedInput": input })
+            }
+            None => json!({ "behavior": "allow" }),
+        },
+        // Plan aprobado "aceptando ediciones": la sesión sale del modo plan a acceptEdits.
+        "always" if event["tool_name"] == "ExitPlanMode" => json!({
+            "behavior": "allow",
+            "updatedPermissions": [{ "type": "setMode", "mode": "acceptEdits", "destination": "session" }]
+        }),
         // "Siempre": se devuelve la primera sugerencia de Claude Code como regla nueva.
         "always" => match event["permission_suggestions"].get(0).cloned() {
             Some(rule) => json!({ "behavior": "allow", "updatedPermissions": [rule] }),
             None => json!({ "behavior": "allow" }),
         },
-        "deny" => json!({ "behavior": "deny", "message": "Denegado desde Wiri." }),
+        "deny" => {
+            let message = answer["message"].as_str().filter(|m| !m.trim().is_empty()).unwrap_or("Denegado desde Wiri.");
+            json!({ "behavior": "deny", "message": message })
+        }
         // "ask" u otro: sin decisión → Claude Code muestra su diálogo normal.
         _ => return None,
     };
@@ -122,13 +139,20 @@ fn statusline() -> Option<()> {
     Some(())
 }
 
+/// `--agent codex` / `--agent gemini`: de qué agente viene el evento (sin flag, Claude Code).
+fn agent_arg() -> String {
+    let args: Vec<String> = std::env::args().collect();
+    args.iter().position(|a| a == "--agent").and_then(|i| args.get(i + 1)).cloned().unwrap_or_else(|| "claude".into())
+}
+
 fn relay() -> Option<()> {
     let mut input = String::new();
     std::io::stdin().read_to_string(&mut input).ok()?;
     let event: Value = serde_json::from_str(&input).ok()?;
 
+    // Codex usa el mismo PermissionRequest que Claude Code; Gemini CLI no tiene (solo avisa).
     let is_permission = event["hook_event_name"] == "PermissionRequest";
-    let body = json!({ "event": event, "ancestors": ancestors() }).to_string();
+    let body = json!({ "event": event, "ancestors": ancestors(), "agent": agent_arg() }).to_string();
     let (path, wait) = if is_permission { ("/permission", PERMISSION_WAIT) } else { ("/hook", BUDGET) };
     let reply = post(path, &body, wait)?;
 
@@ -191,6 +215,29 @@ mod tests {
         assert!(permission_output(&reply("ask"), &event()).is_none());
         assert!(permission_output(&reply("cancelled"), &event()).is_none());
         assert!(permission_output("", &event()).is_none());
+    }
+
+    #[test]
+    fn respuestas_a_preguntas_van_en_updated_input() {
+        let ev = json!({
+            "hook_event_name": "PermissionRequest",
+            "tool_name": "AskUserQuestion",
+            "tool_input": { "questions": [{ "question": "¿Qué base de datos?", "options": [] }] }
+        });
+        let r = "HTTP/1.1 200 OK\r\n\r\n{\"decision\":\"allow\",\"answers\":{\"¿Qué base de datos?\":\"Postgres\"}}";
+        let d = decision(&permission_output(r, &ev).unwrap());
+        assert_eq!(d["behavior"], "allow");
+        assert_eq!(d["updatedInput"]["answers"]["¿Qué base de datos?"], "Postgres");
+        assert_eq!(d["updatedInput"]["questions"][0]["question"], "¿Qué base de datos?");
+    }
+
+    #[test]
+    fn plan_aceptando_ediciones_y_con_cambios() {
+        let ev = json!({ "hook_event_name": "PermissionRequest", "tool_name": "ExitPlanMode", "tool_input": { "plan": "# Plan" } });
+        let d = decision(&permission_output(&reply("always"), &ev).unwrap());
+        assert_eq!(d["updatedPermissions"][0]["mode"], "acceptEdits");
+        let r = "HTTP/1.1 200 OK\r\n\r\n{\"decision\":\"deny\",\"message\":\"Agrega tests\"}";
+        assert_eq!(decision(&permission_output(r, &ev).unwrap())["message"], "Agrega tests");
     }
 
     #[test]

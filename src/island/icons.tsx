@@ -107,6 +107,10 @@ export const CloseIcon = stroke(["M18 6 6 18", "M6 6l12 12"]);
 export const ClockIcon = stroke(["M12 7v5l3 3"], [[12, 12, 9]]);
 export const CalendarIcon = stroke(["M6 5h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z", "M16 3v4", "M8 3v4", "M4 11h16"]);
 export const ChevronUpIcon = stroke(["M6 15l6-6 6 6"]);
+export const ChevronDownIcon = stroke(["M6 9l6 6 6-6"]);
+export const CopyIcon = stroke(["M9 9h10a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V10a1 1 0 0 1 1-1z", "M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"]);
+export const BubbleIcon = stroke(["M12 4c4.97 0 9 3.13 9 7s-4.03 7-9 7c-1.1 0-2.15-.15-3.12-.43L4 20l1.3-3.9C3.85 14.8 3 13 3 11c0-3.87 4.03-7 9-7z", "M8.5 11h.01", "M12 11h.01", "M15.5 11h.01"]);
+export const DropIcon = stroke(["M12 3v12", "M7 10l5 5 5-5", "M5 21h14"]);
 export const KeyboardIcon = stroke([
   "M4 6h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2Z",
   "M6 10h0",
@@ -119,7 +123,9 @@ export const VideoIcon = stroke(["M15 10l4.55-2.28A1 1 0 0 1 21 8.62v6.76a1 1 0 
 export const RefreshIcon = stroke(["M20 11A8.1 8.1 0 0 0 4.5 9M4 5v4h4", "M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4"]);
 export const HeadphonesIcon = stroke(["M4 15a2 2 0 0 1 2-2h1a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z", "M15 15a2 2 0 0 1 2-2h1a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2z", "M4 15v-3a8 8 0 0 1 16 0v3"]);
 export const MicIcon = stroke(["M9 5a3 3 0 0 1 6 0v5a3 3 0 0 1-6 0z", "M5 10a7 7 0 0 0 14 0", "M8 21h8", "M12 17v4"]);
+export const MicOffIcon = stroke(["M9 5a3 3 0 0 1 6 0v5a3 3 0 0 1-6 0z", "M5 10a7 7 0 0 0 14 0", "M8 21h8", "M12 17v4", "M3 3l18 18"]);
 export const CameraIcon = VideoIcon;
+export const ClipboardIcon = stroke(["M9 4h6a1 1 0 0 1 1 1v1a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z", "M8 5H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2", "M8 12h8", "M8 16h5"]);
 export const BoltIcon = (p: IconProps) => (
   <svg {...filled(p)}><path d="M13 2 4 14h7l-1 8 9-12h-7z" /></svg>
 );

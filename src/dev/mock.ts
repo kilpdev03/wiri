@@ -102,6 +102,8 @@ export const demoAlerts: Record<string, Alert> = {
   },
 };
 
+let micMuted = false;
+
 export function installMock() {
   mockIPC(
     (cmd, args) => {
@@ -112,7 +114,21 @@ export function installMock() {
         case "list_reminders":
           return reminders;
         case "shortcuts":
-          return { toggle: "ctrl+alt+i", "quick-add": "ctrl+shift+space" };
+          return { toggle: "ctrl+alt+i", "quick-add": "ctrl+shift+space", "mic-toggle": "ctrl+alt+m", clipboard: "ctrl+alt+v" };
+        case "clipboard_history":
+          return [
+            { id: 3, text: "pnpm tauri dev", copiedMs: Date.now() - 30_000 },
+            { id: 2, text: "https://github.com/kilpdev03/wiri/releases", copiedMs: Date.now() - 600_000 },
+            { id: 1, text: "Hola Camila:\n\nTe envío la propuesta actualizada.\n\nSaludos", copiedMs: Date.now() - 3_600_000 },
+          ];
+        case "clipboard_copy":
+        case "clipboard_remove":
+        case "clipboard_clear":
+        case "clipboard_set_enabled":
+          return null;
+        case "mic_toggle_mute":
+          micMuted = !micMuted;
+          return micMuted;
         case "gmail_list": {
           // Búsqueda simulada: no leídos + algunos leídos, filtrados por texto.
           const read = (m: MailItem): MailItem => ({ ...m, labels: m.labels.filter((l) => l !== "UNREAD") });
@@ -280,11 +296,19 @@ export const demo = {
       setTimeout(() => emit("system://power", { hasBattery: true, charging, percent: 64 }), 50);
     };
   })(),
+  bluetooth: (() => {
+    let percent = 22;
+    return () => {
+      // Primero 22% y luego 18%: cruza el umbral y muestra el aviso de batería baja.
+      emit("system://bluetooth", [{ name: "WH-1000XM4", percent }, { name: "MX Master 3S", percent: 80 }]);
+      percent = percent > 20 ? 18 : 22;
+    };
+  })(),
   mic: (() => {
     let on = false;
     return () => {
       on = !on;
-      emit("system://privacy", { mic: on ? ["Teams"] : [], cam: [] });
+      emit("system://privacy", { mic: on ? ["Teams"] : [], cam: [], micMuted });
     };
   })(),
   update: () => emit("update://available", { version: "0.3.0", current: "0.2.0", notes: "Responder correos con Claude\nArreglos varios" }),

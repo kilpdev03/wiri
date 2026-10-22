@@ -4,8 +4,14 @@ import { cursor } from "./lib/hooks";
 import { events, ipc } from "./lib/ipc";
 import { ANCHORS, applyAppearance } from "./lib/appearance";
 import { startMs, timeRange, untilLabel } from "./lib/calendar";
-import { applyHook, applyStatus, describePermission, resetLabel, usageFromStatus, type ClaudeUsage } from "./lib/claude";
+import { agentMeta, applyHook, applyStatus, describePermission, formatDuration, normalizeHook, resetLabel, usageFromStatus, type ClaudeUsage } from "./lib/claude";
 import { shouldAlert } from "./lib/mailFilters";
+import { toggleMic } from "./lib/mic";
+import { mondayRecapDue, recordHook, recordPermission } from "./lib/recap";
+import { attachFiles } from "./lib/chat";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { listen } from "@tauri-apps/api/event";
+import { startBuddy } from "./lib/buddy";
 import { formatClock } from "./lib/parseReminder";
 import { sounds } from "./lib/sounds";
 import { onUpdateAvailable, onUpdateProgress } from "./lib/update";
@@ -79,6 +85,8 @@ export default function App() {
     const applyPrefs = (p: typeof s.prefs) => {
       applyAppearance(p);
       ipc.setAnchor(ANCHORS[p.anchor].fraction).catch(() => {});
+      // Rust no guarda nada del portapapeles hasta que esto lo active.
+      ipc.clipboardSetEnabled(p.clipboard).catch(() => {});
     };
     applyPrefs(s.prefs);
     const unsubPrefs = useIsland.subscribe((st, prev) => st.prefs !== prev.prefs && applyPrefs(st.prefs));
@@ -90,8 +98,22 @@ export default function App() {
     ipc.notifAccess().then(s.setNotifAccess);
     ipc.calendarStatus().then(s.setCalendar);
     ipc.claudeHooksStatus().then((h) => s.setClaudeHooks(h.installed));
+    ipc.clipboardHistory().then(s.setClipboard);
+    ipc.githubStatus().then((g) => g.updatedMs && s.setGithub(g));
+    // Bolo del escritorio: vuelve a su lugar al arrancar y a la isla en las alertas.
+    const unsubBuddy = startBuddy();
 
     const subs = [
+      // Archivos arrastrados sobre la isla: se abre la "boca" y al soltar van al chat.
+      getCurrentWebview().onDragDropEvent((e) => {
+        const { type } = e.payload;
+        if (type === "enter" || type === "over") useIsland.getState().dropHover || s.setDropHover(true);
+        else if (type === "leave") s.setDropHover(false);
+        else if (type === "drop") {
+          s.setDropHover(false);
+          if (e.payload.paths.length) attachFiles(e.payload.paths);
+        }
+      }),
       events.onMedia((m) => {
         // Se asoma unos segundos al cambiar de canción o al pausar/reanudar.
         const prev = useIsland.getState().media;
@@ -110,28 +132,33 @@ export default function App() {
       events.onCalendar(s.setCalendar),
       events.onUpdateAvailable(onUpdateAvailable),
       events.onUpdateProgress(onUpdateProgress),
-      events.onClaudePermission(({ id, event, ancestors }) => {
+      events.onClaudePermission(({ id, event, ancestors, agent }) => {
         const st = useIsland.getState();
         // Desactivado en Ajustes: el permiso vuelve a la terminal al instante.
+        recordPermission();
         if (!st.prefs.claudeApprove) return void ipc.claudePermissionRespond(id, "ask");
         const sessionId = String(event.session_id ?? "");
-        const { sessions } = applyHook(st.claude, { event: { ...event, hook_event_name: "Notification", notification_type: "permission_prompt", message: `Permiso: ${event.tool_name}` }, ancestors });
+        const { sessions } = applyHook(st.claude, { event: { ...event, hook_event_name: "Notification", notification_type: "permission_prompt", message: `Permiso: ${event.tool_name}` }, ancestors, agent });
         s.setClaude(sessions);
-        const { title, detail } = describePermission(event.tool_name, event.tool_input);
+        const { title, detail } = describePermission(event.tool_name, event.tool_input, agent);
         sounds.chime();
         s.pushAlert({
           id,
           kind: "claude",
-          app: `Claude Code · ${sessions[sessionId]?.project ?? ""}`,
+          app: `${agentMeta(agent).name} · ${sessions[sessionId]?.project ?? ""}`,
           title,
           body: detail,
           ancestors,
+          agent,
           permission: {
             id,
             sessionId,
             tool: String(event.tool_name ?? ""),
             detail,
-            canAlways: Array.isArray(event.permission_suggestions) && event.permission_suggestions.length > 0,
+            // En un plan, "Siempre" es aprobarlo aceptando las ediciones.
+            canAlways: event.tool_name === "ExitPlanMode" || (Array.isArray(event.permission_suggestions) && event.permission_suggestions.length > 0),
+            questions: event.tool_name === "AskUserQuestion" && Array.isArray(event.tool_input?.questions) ? event.tool_input.questions : undefined,
+            plan: event.tool_name === "ExitPlanMode" ? String(event.tool_input?.plan ?? "") : undefined,
           },
         });
       }),
@@ -158,8 +185,13 @@ export default function App() {
       }),
       events.onClaudeHook((payload) => {
         // Las redacciones de borradores (claude -p en la carpeta de Wiri) no son sesiones tuyas.
-        if (String(payload.event.cwd ?? "").toLowerCase().includes("\\wiri\\borradores")) return;
-        const { sessions, alert, sessionId } = applyHook(useIsland.getState().claude, payload);
+        // Igual el chat de la isla (claude -p en \Wiri\chat).
+        const cwd = String(payload.event.cwd ?? "").toLowerCase();
+        if (cwd.includes("\\wiri\\borradores") || cwd.includes("\\wiri\\chat")) return;
+        const before = useIsland.getState().claude;
+        const hook = normalizeHook(payload);
+        recordHook(before[String(hook.event.session_id ?? "")], hook.event);
+        const { sessions, alert, sessionId } = applyHook(before, hook);
         s.setClaude(sessions);
         if (!alert) return;
         // El aviso "necesita tu permiso" sobra si la tarjeta de permiso ya está en la isla.
@@ -171,10 +203,11 @@ export default function App() {
         s.pushAlert({
           id: `claude-${sessionId}-${Date.now()}`,
           kind: "claude",
-          app: "Claude Code",
+          app: agentMeta(hook.agent).name,
           title: alert.title,
           body: alert.body,
           ancestors: sessions[sessionId!]?.ancestors,
+          agent: hook.agent,
         });
       }),
       events.onVolume((volume) => {
@@ -197,6 +230,20 @@ export default function App() {
         } else if (!power.charging && [20, 10].some((t) => prev.percent > t && power.percent <= t)) {
           sounds.chime();
           s.showOsd({ kind: "battery-low", power }, 6000);
+          s.react("nope");
+        }
+      }),
+      events.onBluetooth((list) => {
+        const prev = useIsland.getState().bluetooth;
+        s.setBluetooth(list);
+        // Mismo umbral que la laptop: avisa al cruzar 20% y 10% (no al arrancar ni al reconectar).
+        const low = list.find((d) => {
+          const before = prev.find((p) => p.name === d.name);
+          return before && [20, 10].some((t) => before.percent > t && d.percent <= t);
+        });
+        if (low) {
+          sounds.chime();
+          s.showOsd({ kind: "bt-low", device: low }, 6000);
           s.react("nope");
         }
       }),
@@ -235,6 +282,24 @@ export default function App() {
           ipc.grabFocus();
         }
       }),
+      events.onMicToggle(toggleMic),
+      listen<boolean>("buddy://away", (e) => {
+        const wasAway = useIsland.getState().buddyAway;
+        s.setBuddyAway(e.payload);
+        // Volvió a casa: la isla se asoma y Bolo aparece con un saltito.
+        if (wasAway && !e.payload) {
+          s.flash(2200);
+          s.react("hello");
+          sounds.boop();
+        }
+      }),
+      events.onClipboard(s.setClipboard),
+      events.onGithub(s.setGithub),
+      events.onClipboardShortcut(() => {
+        useIsland.getState().openPanel("clipboard");
+        sounds.open();
+        ipc.grabFocus();
+      }),
       events.onQuickAdd(() => {
         useIsland.getState().setQuickAdd(true);
         ipc.grabFocus();
@@ -242,6 +307,21 @@ export default function App() {
     ];
     const stopMeetings = startMeetingAlerts();
     // Sesiones de Claude sin eventos en la última hora (cerradas sin SessionEnd): fuera.
+    // Los lunes: el resumen de la semana pasada, una sola vez.
+    const checkRecap = () => {
+      const recap = mondayRecapDue();
+      if (!recap) return;
+      s.pushAlert({
+        id: `recap-${recap.from}`,
+        kind: "claude",
+        app: "Claude Code · tu semana",
+        title: `${formatDuration(recap.ms)} con Claude la semana pasada`,
+        body: `${recap.sessions} sesiones · ${recap.files} archivos · +${recap.added} −${recap.removed}${recap.topProject ? ` · más en ${recap.topProject}` : ""}`,
+        recap: true,
+      });
+    };
+    const recapTimer = setTimeout(checkRecap, 8_000);
+    const recapInterval = setInterval(checkRecap, 3_600_000);
     const prune = setInterval(() => {
       const st = useIsland.getState();
       const cutoff = Date.now() - 3_600_000;
@@ -252,6 +332,9 @@ export default function App() {
       unsubPrefs();
       stopMeetings();
       clearInterval(prune);
+      unsubBuddy();
+      clearTimeout(recapTimer);
+      clearInterval(recapInterval);
       subs.forEach((p) => p.then((unlisten) => unlisten()));
     };
   }, []);

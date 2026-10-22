@@ -2,6 +2,8 @@ import { useEffect, useRef } from "react";
 import { cursor } from "../lib/hooks";
 import { sounds } from "../lib/sounds";
 import { ACCENTS } from "../lib/appearance";
+import { drawOutfit, OUTFIT_CYCLE, OUTFITS, resolveOutfit } from "../lib/outfits";
+import { buddyPickUp } from "../lib/buddy";
 import { useIsland, type Reaction } from "../store/islandStore";
 
 export type Mood = "idle" | "dance" | "alert" | "sleep";
@@ -50,18 +52,23 @@ export function Mascot({
   mood = "idle",
   color,
   pokeable = false,
+  detachable = false,
 }: {
   size: number;
   mood?: Mood;
   color?: string;
   pokeable?: boolean;
+  /** Se puede arrastrar fuera de la isla para dejarlo en el escritorio. */
+  detachable?: boolean;
 }) {
   // Sin color explícito, Bolo usa el acento elegido en Apariencia.
   const accent = useIsland((s) => ACCENTS[s.prefs.accent].rgb);
+  const outfitPref = useIsland((s) => s.prefs.outfit);
   color ??= accent;
+  const outfit = resolveOutfit(outfitPref);
   const canvas = useRef<HTMLCanvasElement>(null);
-  const props = useRef({ mood, color: parseRgb(color), size });
-  props.current = { mood, color: parseRgb(color), size };
+  const props = useRef({ mood, color: parseRgb(color), size, outfit });
+  props.current = { mood, color: parseRgb(color), size, outfit };
 
   const sim = useRef<Sim>({
     t: 0,
@@ -116,7 +123,7 @@ export function Mascot({
       raf = requestAnimationFrame(frame);
       const dt = Math.min(0.05, (nowMs - last) / 1000);
       last = nowMs;
-      const { mood, color, size } = props.current;
+      const { mood, color, size, outfit } = props.current;
       const s = sim.current;
       s.t += dt;
 
@@ -298,6 +305,8 @@ export function Mascot({
         ctx.stroke();
       }
 
+      if (outfit !== "none") drawOutfit(ctx, outfit, { u, w: bodyW, h: bodyH, eyeY, eyeDX, lookOff, t: s.t });
+
       // Insignia de alerta.
       if (mood === "alert") {
         const bx = bodyW * 0.48;
@@ -359,12 +368,57 @@ export function Mascot({
     }
   };
 
+  // Arrastrar a Bolo fuera de la isla: sale al escritorio justo donde lo sueltas.
+  const startDetach = (e: React.PointerEvent) => {
+    if (!detachable || e.button !== 0) return;
+    // Captura: los movimientos llegan aunque el cursor salga del dibujo.
+    (e.currentTarget as Element).setPointerCapture(e.pointerId);
+    const x0 = e.clientX;
+    const y0 = e.clientY;
+    const move = (ev: PointerEvent) => {
+      if (Math.hypot(ev.clientX - x0, ev.clientY - y0) < 36) return;
+      cleanup();
+      // Rust lo pone bajo el cursor (posición real de Windows) y lo lleva hasta que sueltas.
+      if (!useIsland.getState().buddyAway) {
+        buddyPickUp();
+        sounds.boop();
+      }
+    };
+    const cleanup = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", cleanup);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", cleanup);
+  };
+
+  // Clic derecho: el siguiente atuendo del armario.
+  const changeOutfit = (e: React.MouseEvent) => {
+    if (!pokeable) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const { prefs, setPref } = useIsland.getState();
+    const next = OUTFIT_CYCLE[(OUTFIT_CYCLE.indexOf(prefs.outfit) + 1) % OUTFIT_CYCLE.length];
+    setPref("outfit", next);
+    sim.current.jumpV = 2.2;
+    sim.current.expression = "happy";
+    sim.current.expressionUntil = sim.current.t + 1;
+    sounds.boop();
+  };
+
   return (
     <canvas
       ref={canvas}
       className="mascot"
       style={{ width: size, height: size, cursor: pokeable ? "pointer" : undefined }}
       onClick={poke}
+      onPointerDown={startDetach}
+      onContextMenu={changeOutfit}
+      title={
+        pokeable
+          ? `${detachable ? "Arrástrame al escritorio · " : ""}Clic derecho: cambiar ropa (${OUTFITS[outfitPref].label})`
+          : undefined
+      }
     />
   );
 }

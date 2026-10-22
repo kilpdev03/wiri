@@ -1,11 +1,11 @@
 import { motion } from "motion/react";
 import type { Osd as OsdData } from "../../store/islandStore";
-import { BoltIcon, HeadphonesIcon, VolumeIcon, VolumeOffIcon } from "../icons";
+import { BoltIcon, HeadphonesIcon, MicIcon, MicOffIcon, VolumeIcon, VolumeOffIcon } from "../icons";
 
 const SPRING = { type: "spring" as const, stiffness: 420, damping: 30 };
 
 /** Batería dibujada, con relleno animado y rayo si está cargando. */
-function Battery({ percent, charging }: { percent: number; charging: boolean }) {
+export function Battery({ percent, charging }: { percent: number; charging: boolean }) {
   const color = charging ? "#30d158" : percent <= 20 ? "#ff453a" : "var(--text)";
   return (
     <span className="battery">
@@ -69,6 +69,35 @@ export function Osd({ osd }: { osd: OsdData }) {
           <span className="caption">Ahora suena en</span>
           <span className="text-sm truncate">{osd.name}</span>
         </div>
+      </div>
+    );
+  }
+  if (osd.kind === "mic") {
+    return (
+      <div className="osd">
+        <motion.span
+          className="osd-icon"
+          key={String(osd.muted)}
+          style={{ color: osd.muted ? "#ff453a" : "#30d158" }}
+          initial={{ scale: 0.6 }}
+          animate={{ scale: 1 }}
+          transition={SPRING}
+        >
+          {osd.muted ? <MicOffIcon size={16} /> : <MicIcon size={16} />}
+        </motion.span>
+        <span className="text-sm grow">{osd.muted ? "Micrófono silenciado" : "Micrófono activo"}</span>
+      </div>
+    );
+  }
+  if (osd.kind === "bt-low") {
+    return (
+      <div className="osd">
+        <Battery percent={osd.device.percent} charging={false} />
+        <div className="col grow min-w-0">
+          <span className="text-sm" style={{ color: "#ff453a" }}>Batería baja</span>
+          <span className="caption truncate">{osd.device.name}</span>
+        </div>
+        <span className="osd-value">{osd.device.percent}%</span>
       </div>
     );
   }

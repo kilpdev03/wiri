@@ -1,6 +1,10 @@
+mod agents;
 mod audio_devices;
+mod buddy;
 mod calendar;
 mod claude;
+mod clipboard;
+mod github;
 mod gmail;
 mod media;
 mod notifications;
@@ -21,7 +25,9 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 /// Atajos globales: evento que disparan y candidatos en orden de preferencia
 /// (se usa el primero que no esté ocupado por otra app).
-const SHORTCUTS: [(&str, &[&str]); 2] = [
+const SHORTCUTS: [(&str, &[&str]); 4] = [
+    ("island://clipboard", &["ctrl+alt+v", "alt+shift+v"]),
+    ("island://mic-toggle", &["ctrl+alt+m", "alt+shift+m"]),
     ("island://toggle", &["ctrl+alt+i", "alt+shift+i", "ctrl+alt+o"]),
     ("island://quick-add", &["ctrl+alt+space", "ctrl+shift+space", "alt+shift+r"]),
 ];
@@ -29,25 +35,65 @@ const SHORTCUTS: [(&str, &[&str]); 2] = [
 /// Atajo efectivamente registrado por evento.
 static ACTIVE_SHORTCUTS: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 
+/// Atajos que elegiste en Ajustes (nombre → combinación); van antes que los de fábrica.
+fn overrides_path() -> std::path::PathBuf {
+    std::path::PathBuf::from(std::env::var("LOCALAPPDATA").unwrap_or_default()).join("Wiri").join("shortcuts.json")
+}
+
+fn load_overrides() -> HashMap<String, String> {
+    std::fs::read_to_string(overrides_path()).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+}
+
+fn bind(app: &AppHandle, event: &'static str, accel: &str) -> bool {
+    app.global_shortcut()
+        .on_shortcut(accel, move |app, _shortcut, e| {
+            if e.state == ShortcutState::Pressed {
+                let _ = app.emit(event, ());
+            }
+        })
+        .is_ok()
+}
+
 fn register_shortcuts(app: &AppHandle) {
+    let overrides = load_overrides();
     let mut active = HashMap::new();
     for (event, candidates) in SHORTCUTS {
-        for sc in candidates {
-            let ok = app
-                .global_shortcut()
-                .on_shortcut(*sc, move |app, _shortcut, e| {
-                    if e.state == ShortcutState::Pressed {
-                        let _ = app.emit(event, ());
-                    }
-                })
-                .is_ok();
-            if ok {
-                active.insert(event.trim_start_matches("island://").to_string(), sc.to_string());
+        let name = event.trim_start_matches("island://");
+        let mine = overrides.get(name).map(String::as_str);
+        for sc in mine.into_iter().chain(candidates.iter().copied()) {
+            if bind(app, event, sc) {
+                active.insert(name.to_string(), sc.to_string());
                 break;
             }
         }
     }
     *ACTIVE_SHORTCUTS.lock().unwrap() = Some(active);
+}
+
+/// Cambia un atajo (`accel` como "ctrl+alt+k"). Si otra app lo usa o no es válido,
+/// se queda el anterior y devuelve el error. Devuelve los atajos activos.
+#[tauri::command]
+fn set_shortcut(app: AppHandle, name: String, accel: String) -> Result<HashMap<String, String>, String> {
+    let accel = accel.trim().to_lowercase();
+    let (event, _) = SHORTCUTS.iter().find(|(ev, _)| ev.trim_start_matches("island://") == name).ok_or("Atajo desconocido.")?;
+    let current = shortcuts().get(&name).cloned();
+    if current.as_deref() == Some(accel.as_str()) {
+        return Ok(shortcuts());
+    }
+    if shortcuts().values().any(|a| *a == accel) {
+        return Err("Esa combinación ya la usa otro atajo de Wiri.".into());
+    }
+    if !bind(&app, event, &accel) {
+        return Err("Esa combinación no es válida o ya la usa otra app.".into());
+    }
+    if let Some(old) = current {
+        let _ = app.global_shortcut().unregister(old.as_str());
+    }
+    ACTIVE_SHORTCUTS.lock().unwrap().get_or_insert_with(HashMap::new).insert(name.clone(), accel.clone());
+    let mut overrides = load_overrides();
+    overrides.insert(name, accel);
+    let _ = std::fs::write(overrides_path(), serde_json::to_string_pretty(&overrides).unwrap_or_default());
+    Ok(shortcuts())
 }
 
 /// `{ "toggle": "ctrl+alt+i", "quick-add": "ctrl+alt+space" }`
@@ -164,6 +210,9 @@ pub fn run() {
             reminders::start(handle);
             notifications::start(handle);
             system::start(handle);
+            clipboard::start(handle);
+            buddy::setup(handle);
+            github::start(handle);
             claude::start(handle);
             updater::start(handle);
             let mail = gmail::Gmail::load();
@@ -177,6 +226,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             shortcuts,
+            set_shortcut,
             updater::update_check,
             updater::update_install,
             window::set_anchor,
@@ -188,9 +238,26 @@ pub fn run() {
             claude::claude_projects,
             claude::claude_launch,
             claude::claude_draft_reply,
+            claude::claude_chat,
+            agents::agents_status,
+            github::github_status,
+            github::github_refresh,
+            agents::agent_hooks_install,
+            agents::agent_hooks_uninstall,
             claude::claude_permission_respond,
             audio_devices::audio_set_default,
+            audio_devices::mic_toggle_mute,
+            clipboard::clipboard_history,
+            clipboard::clipboard_copy,
+            clipboard::clipboard_remove,
+            clipboard::clipboard_clear,
+            clipboard::clipboard_set_enabled,
             window::set_hit_rect,
+            buddy::buddy_info,
+            buddy::buddy_pick_up,
+            buddy::buddy_drag_begin,
+            buddy::buddy_fly_out,
+            buddy::buddy_fly_home,
             window::grab_focus,
             window::release_focus,
             media::current_media,

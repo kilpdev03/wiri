@@ -1,0 +1,6 @@
+# Ajustes de pnpm para este proyecto.
+
+# pnpm 11 no instala versiones publicadas hace menos de 1 día (protección ante
+# paquetes maliciosos que se retiran en las primeras horas). Aquí se baja a 12 h
+# para poder usar releases recientes de Tauri y Vite sin esperar un día entero.
+minimumReleaseAge: 720
