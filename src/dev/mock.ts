@@ -1,7 +1,7 @@
 // Modo navegador (`pnpm dev`): simula el backend de Tauri para diseñar la isla
 // sin compilar Rust. Nunca se carga dentro de la app real.
 import { emit } from "@tauri-apps/api/event";
-import { mockIPC } from "@tauri-apps/api/mocks";
+import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import type { Alert, CalEvent, CalendarStatus, GmailStatus, MailItem, Media, Reminder } from "../lib/ipc";
 
 const now = Date.now();
@@ -105,6 +105,8 @@ export const demoAlerts: Record<string, Alert> = {
 let micMuted = false;
 
 export function installMock() {
+  // La isla escucha archivos soltados en su ventana: hace falta una ventana simulada.
+  mockWindows("main");
   mockIPC(
     (cmd, args) => {
       const a = (args ?? {}) as Record<string, unknown>;
@@ -252,6 +254,31 @@ export function installMock() {
           reminders = reminders.filter((r) => r.id !== a.id);
           emit("reminder://changed", reminders);
           return null;
+        case "claude_hooks_status":
+          return {
+            installed: false,
+            settingsPath: "C:/Users/demo/.claude/settings.json",
+            relayPath: "C:/Users/demo/AppData/Local/Wiri/bin/wiri-hook.exe",
+            events: [],
+            otherStatusLine: false,
+            error: null,
+          };
+        case "agents_status":
+          return [
+            { id: "codex", name: "Codex", detected: true, installed: false, configPath: "C:/Users/demo/.codex/hooks.json", error: null },
+            { id: "gemini", name: "Gemini CLI", detected: false, installed: false, configPath: "C:/Users/demo/.gemini/settings.json", error: null },
+          ];
+        case "github_status":
+        case "github_refresh":
+          return { connected: false, login: null, mine: [], reviews: [], error: null, updatedMs: 0 };
+        case "claude_chat":
+          return new Promise((resolve) =>
+            setTimeout(() => resolve({ text: `(simulado) Recibí: ${String(a.message ?? "")}`, sessionId: "demo-chat", skipped: [] }), 900),
+          );
+        case "buddy_info":
+          return false;
+        case "notif_access":
+          return "allowed";
         case "plugin:app|version":
           return "0.2.0";
         case "update_install":

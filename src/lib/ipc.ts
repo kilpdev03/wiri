@@ -183,7 +183,6 @@ export const ipc = {
   agentsStatus: () => invoke<AgentStatus[]>("agents_status"),
   agentHooksInstall: (id: string) => invoke<string>("agent_hooks_install", { id }),
   agentHooksUninstall: (id: string) => invoke<string>("agent_hooks_uninstall", { id }),
-  buddyToggle: (show: boolean, x?: number, y?: number) => invoke<boolean>("buddy_toggle", { show, x: x ?? null, y: y ?? null }),
   claudeChat: (message: string, sessionId: string | null, files: string[]) =>
     invoke<{ text: string; sessionId: string | null; skipped: string[] }>("claude_chat", { message, sessionId, files }),
   clipboardHistory: () => invoke<ClipItem[]>("clipboard_history"),
